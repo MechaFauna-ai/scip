@@ -197,6 +197,9 @@ SCIP_RETCODE dfs(
    int*                  stacknextcliquevar, /**< array of size number of nodes to store the number of variables
                                               *   already evaluated for the clique currently being evaluated */
    int*                  cliqueexit,         /**< exit node when entering a clique */
+   int*                  cliquescanpos,      /**< by clique index, number of leading clique variables whose nodes are
+                                              *   known to be visited in the current dfs (clean on input and output) */
+   int*                  touchedcliques,     /**< array to store the indices of cliques with nonzero scan position */
    int*                  dfsnodes,           /**< array of nodes that can be reached starting at startnode, in reverse
                                               *   dfs order */
    int*                  ndfsnodes           /**< pointer to store number of nodes that can be reached starting at
@@ -214,6 +217,7 @@ SCIP_RETCODE dfs(
    int curridx;
    int idx;
    int nvbvars;
+   int ntouchedcliques;
    int i;
 
    assert(startnode >= 0);
@@ -233,6 +237,7 @@ SCIP_RETCODE dfs(
    maxstacksize = 1;
    stacksize = 1;
    idx = -1;
+   ntouchedcliques = 0;
 
    /* we run until no more bounds indices are on the stack */
    while( stacksize > 0 )
@@ -338,11 +343,41 @@ SCIP_RETCODE dfs(
             }
             if( !found )
             {
+               int cliqueidx;
+               int scanpos;
+
                cliquevars = SCIPcliqueGetVars(cliques[j]);
                cliquevals = SCIPcliqueGetValues(cliques[j]);
                ncliquevars = SCIPcliqueGetNVars(cliques[j]);
 
-               for( i = 0; i < ncliquevars; ++i )
+               /* skip the leading clique variables whose nodes are visited; nodes of clique variables stay visited
+                * until the end of the dfs, so the scan below finds the same first unvisited node as a scan from the
+                * start of the clique, but the clique variables are not inspected again each time the clique is scanned
+                */
+               cliqueidx = SCIPcliqueGetIndex(cliques[j]);
+               scanpos = cliquescanpos[cliqueidx];
+               while( scanpos < ncliquevars && visited[cliquevals[scanpos]
+                     ? getLbIndex(SCIPvarGetProbindex(cliquevars[scanpos]))
+                     : getUbIndex(SCIPvarGetProbindex(cliquevars[scanpos]))] )
+                  ++scanpos;
+               if( scanpos > cliquescanpos[cliqueidx] )
+               {
+                  if( cliquescanpos[cliqueidx] == 0 )
+                     touchedcliques[ntouchedcliques++] = cliqueidx;
+                  cliquescanpos[cliqueidx] = scanpos;
+               }
+
+#ifndef NDEBUG
+               /* the skipped clique variables would also be skipped by a scan from the start of the clique */
+               for( i = 0; i < scanpos; ++i )
+               {
+                  assert(cliquevars[i] == startvar || visited[cliquevals[i]
+                        ? getLbIndex(SCIPvarGetProbindex(cliquevars[i]))
+                        : getUbIndex(SCIPvarGetProbindex(cliquevars[i]))]);
+               }
+#endif
+
+               for( i = scanpos; i < ncliquevars; ++i )
                {
                   assert(SCIPvarIsActive(cliquevars[i]));
 
@@ -408,6 +443,10 @@ SCIP_RETCODE dfs(
          visited[curridx] = FALSE;
    }
 
+   /* clean the scan positions, since the start node may not stay visited */
+   for( i = 0; i < ntouchedcliques; ++i )
+      cliquescanpos[touchedcliques[i]] = 0;
+
    return SCIP_OKAY;
 }
 
@@ -424,6 +463,8 @@ SCIP_RETCODE topologicalSort(
    int* stacknextedge;
    int* stacknextcliquevar;
    int* cliqueexit;
+   int* cliquescanpos;
+   int* touchedcliques;
    SCIP_Shortbool* visited;
    int nbounds;
    int i;
@@ -436,6 +477,8 @@ SCIP_RETCODE topologicalSort(
    SCIP_CALL( SCIPallocBufferArray(scip, &stacknextedge, nbounds) );
    SCIP_CALL( SCIPallocBufferArray(scip, &stacknextcliquevar, nbounds) );
    SCIP_CALL( SCIPallocClearBufferArray(scip, &cliqueexit, SCIPgetNCliques(scip)) );
+   SCIP_CALL( SCIPallocClearBufferArray(scip, &cliquescanpos, SCIPgetNCliques(scip)) );
+   SCIP_CALL( SCIPallocBufferArray(scip, &touchedcliques, SCIPgetNCliques(scip)) );
    SCIP_CALL( SCIPallocClearBufferArray(scip, &visited, nbounds) );
 
    /* while there are unvisited nodes, run dfs on the inverse graph starting from one of these nodes; the dfs orders are
@@ -446,12 +489,15 @@ SCIP_RETCODE topologicalSort(
    {
       if( !visited[i] )
       {
-         SCIP_CALL( dfs(scip, i, visited, dfsstack, stacknextedge, stacknextcliquevar, cliqueexit, vbvars, nvbvars) );
+         SCIP_CALL( dfs(scip, i, visited, dfsstack, stacknextedge, stacknextcliquevar, cliqueexit, cliquescanpos,
+               touchedcliques, vbvars, nvbvars) );
       }
    }
    assert(*nvbvars <= nbounds);
 
    SCIPfreeBufferArray(scip, &visited);
+   SCIPfreeBufferArray(scip, &touchedcliques);
+   SCIPfreeBufferArray(scip, &cliquescanpos);
    SCIPfreeBufferArray(scip, &cliqueexit);
    SCIPfreeBufferArray(scip, &stacknextcliquevar);
    SCIPfreeBufferArray(scip, &stacknextedge);
