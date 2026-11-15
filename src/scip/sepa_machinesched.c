@@ -79,6 +79,7 @@
 #define DEFAULT_MAXMACHINES         100 /**< maximal number of machines (job sets) to detect */
 #define DEFAULT_MINJOBS               3 /**< minimal number of jobs on a machine */
 #define MAXORDCOLS               200000 /**< maximal number of columns for which order records are kept */
+#define DEFAULT_RELEASECUTS        TRUE /**< should cuts for all release-date thresholds be generated? */
 #define DEFAULT_ORDEREQUALITIES    TRUE /**< should binary variables determining the same order be identified? */
 
 /** separator data */
@@ -87,6 +88,7 @@ struct SCIP_SepaData
    int                   maxmachines;        /**< maximal number of machines (job sets) to detect */
    int                   minjobs;            /**< minimal number of jobs on a machine */
    SCIP_Bool             orderequalities;    /**< should binary variables determining the same order be identified? */
+   SCIP_Bool             releasecuts;        /**< should cuts for all release-date thresholds be generated? */
    SCIP_Bool             tried;              /**< was the detection already performed in this run? */
    int                   ncuts;              /**< number of cuts generated */
    int                   nmachines;          /**< number of machines detected */
@@ -445,6 +447,7 @@ SCIP_RETCODE detectMachines(
 {
    SCIP_Bool* used;
    SCIP_Real* proc;
+   SCIP_Real* thresholds;
    SCIP_Real* keys;
    int* degree;
    int* cands;
@@ -457,6 +460,7 @@ SCIP_RETCODE detectMachines(
    SCIP_CALL( SCIPallocBufferArray(scip, &keys, ncols) );
    SCIP_CALL( SCIPallocBufferArray(scip, &jobs, ncols) );
    SCIP_CALL( SCIPallocBufferArray(scip, &proc, ncols) );
+   SCIP_CALL( SCIPallocBufferArray(scip, &thresholds, ncols) );
 
    for( m = 0; m < sepadata->maxmachines && !(*cutoff); ++m )
    {
@@ -543,62 +547,94 @@ SCIP_RETCODE detectMachines(
       ++sepadata->nmachines;
       SCIPdebugMsg(scip, "machine %d with %d jobs, release date %g\n", m, njobs, release);
 
-      /* release-date cut for each job i: -s_i + sum_{j != i} p_j [j before i] <= -release */
+      /* release-date cuts for each job i and each threshold t <= r_i among the release dates of the machine:
+       *    s_i >= t + sum_{j != i, r_j >= t} p_j [j before i],
+       * i.e., -s_i + sum_{j != i, r_j >= t} p_j [j before i] <= -t; the smallest threshold yields the cut over all jobs
+       */
+      for( i = 0; i < njobs; ++i )
+         thresholds[i] = SCIPvarGetLbGlobal(SCIPcolGetVar(cols[jobs[i]]));
+      SCIPsortReal(thresholds, njobs);
+
       for( i = 0; i < njobs && !(*cutoff); ++i )
       {
-         SCIP_ROW* cut;
-         char name[SCIP_MAXSTRLEN];
-         SCIP_Real rhs = -release;
-         int j;
+         SCIP_Real ri = SCIPvarGetLbGlobal(SCIPcolGetVar(cols[jobs[i]]));
+         int t;
 
-         (void) SCIPsnprintf(name, SCIP_MAXSTRLEN, "machinesched_%d_%d", m, i);
-         SCIP_CALL( SCIPcreateEmptyRowSepa(scip, &cut, sepa, name, -SCIPinfinity(scip), SCIPinfinity(scip),
-               FALSE, FALSE, TRUE) );
-         SCIP_CALL( SCIPcacheRowExtensions(scip, cut) );
-
-         for( j = 0; j < njobs; ++j )
+         for( t = 0; t < njobs && !(*cutoff); ++t )
          {
-            int arc;
+            SCIP_ROW* cut;
+            char name[SCIP_MAXSTRLEN];
+            SCIP_Real thres;
+            SCIP_Real rhs;
+            int nterms;
+            int j;
 
-            if( j == i )
+            /* skip duplicate thresholds and, unless enabled, all thresholds but the smallest */
+            if( t > 0 && (thresholds[t] == thresholds[t - 1] || !sepadata->releasecuts) ) /*lint !e777*/
                continue;
 
-            arc = findArc(arcs, jobs[j], jobs[i]);
-            assert(arc >= 0);
-            assert(!SCIPisInfinity(scip, proc[j]));
+            thres = (t == 0) ? release : thresholds[t];
+            if( thres > ri )
+               break;
 
-            if( arcs->val[arc] )
+            rhs = -thres;
+            nterms = 0;
+
+            (void) SCIPsnprintf(name, SCIP_MAXSTRLEN, "machinesched_%d_%d_%d", m, i, t);
+            SCIP_CALL( SCIPcreateEmptyRowSepa(scip, &cut, sepa, name, -SCIPinfinity(scip), SCIPinfinity(scip),
+                  FALSE, FALSE, TRUE) );
+            SCIP_CALL( SCIPcacheRowExtensions(scip, cut) );
+
+            for( j = 0; j < njobs; ++j )
             {
-               SCIP_CALL( SCIPaddVarToRow(scip, cut, SCIPcolGetVar(cols[arcs->bin[arc]]), proc[j]) );
+               int arc;
+
+               if( j == i || SCIPvarGetLbGlobal(SCIPcolGetVar(cols[jobs[j]])) < thres )
+                  continue;
+
+               arc = findArc(arcs, jobs[j], jobs[i]);
+               assert(arc >= 0);
+               assert(!SCIPisInfinity(scip, proc[j]));
+
+               if( arcs->val[arc] )
+               {
+                  SCIP_CALL( SCIPaddVarToRow(scip, cut, SCIPcolGetVar(cols[arcs->bin[arc]]), proc[j]) );
+               }
+               else
+               {
+                  SCIP_CALL( SCIPaddVarToRow(scip, cut, SCIPcolGetVar(cols[arcs->bin[arc]]), -proc[j]) );
+                  rhs -= proc[j];
+               }
+               ++nterms;
             }
-            else
+
+            if( nterms > 0 )
             {
-               SCIP_CALL( SCIPaddVarToRow(scip, cut, SCIPcolGetVar(cols[arcs->bin[arc]]), -proc[j]) );
-               rhs -= proc[j];
-            }
-         }
-         SCIP_CALL( SCIPaddVarToRow(scip, cut, SCIPcolGetVar(cols[jobs[i]]), -1.0) );
-         SCIP_CALL( SCIPflushRowExtensions(scip, cut) );
-         SCIP_CALL( SCIPchgRowRhs(scip, cut, rhs) );
+               SCIP_CALL( SCIPaddVarToRow(scip, cut, SCIPcolGetVar(cols[jobs[i]]), -1.0) );
+               SCIP_CALL( SCIPflushRowExtensions(scip, cut) );
+               SCIP_CALL( SCIPchgRowRhs(scip, cut, rhs) );
 
 #ifdef SCIP_DEBUG
-         SCIP_CALL( SCIPprintRow(scip, cut, NULL) );
+               SCIP_CALL( SCIPprintRow(scip, cut, NULL) );
 #endif
-         SCIP_CALL( SCIPaddPoolCut(scip, cut) );
+               SCIP_CALL( SCIPaddPoolCut(scip, cut) );
 
-         if( SCIPisCutEfficacious(scip, NULL, cut) )
-         {
-            SCIP_CALL( SCIPaddRow(scip, cut, FALSE, cutoff) );
+               if( SCIPisCutEfficacious(scip, NULL, cut) )
+               {
+                  SCIP_CALL( SCIPaddRow(scip, cut, FALSE, cutoff) );
+               }
+               ++(*ncuts);
+            }
+
+            SCIP_CALL( SCIPreleaseRow(scip, &cut) );
          }
-         ++(*ncuts);
-
-         SCIP_CALL( SCIPreleaseRow(scip, &cut) );
       }
 
       for( i = 0; i < njobs; ++i )
          used[jobs[i]] = TRUE;
    }
 
+   SCIPfreeBufferArray(scip, &thresholds);
    SCIPfreeBufferArray(scip, &proc);
    SCIPfreeBufferArray(scip, &jobs);
    SCIPfreeBufferArray(scip, &keys);
@@ -757,6 +793,10 @@ SCIP_RETCODE SCIPincludeSepaMachinesched(
    SCIP_CALL( SCIPaddBoolParam(scip, "separating/" SEPA_NAME "/orderequalities",
          "should binary variables that determine the order of the same pair of jobs be identified via cliques?",
          &sepadata->orderequalities, TRUE, DEFAULT_ORDEREQUALITIES, NULL, NULL) );
+
+   SCIP_CALL( SCIPaddBoolParam(scip, "separating/" SEPA_NAME "/releasecuts",
+         "should cuts be generated for all release-date thresholds (otherwise only for the smallest release date)?",
+         &sepadata->releasecuts, TRUE, DEFAULT_RELEASECUTS, NULL, NULL) );
 
    return SCIP_OKAY;
 }
