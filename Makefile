@@ -882,6 +882,7 @@ SCIPPLUGINLIBOBJ=	scip/benders_default.o \
 			scip/sepa_interminor.o \
 			scip/sepa_intobj.o \
 			scip/sepa_lagromory.o \
+			scip/sepa_machinesched.o \
 			scip/sepa_mcf.o \
 			scip/sepa_minor.o \
 			scip/sepa_mixing.o \
