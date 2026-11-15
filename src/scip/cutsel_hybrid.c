@@ -35,8 +35,11 @@
 #include "scip/scip_cutsel.h"
 #include "scip/scip_cut.h"
 #include "scip/scip_lp.h"
+#include "scip/scip_mem.h"
 #include "scip/scip_randnumgen.h"
 #include "scip/cutsel_hybrid.h"
+#include "scip/pub_lp.h"
+#include "scip/struct_lp.h"
 
 
 #define CUTSEL_NAME              "hybrid"
@@ -53,6 +56,11 @@
 #define DEFAULT_INTSUPPORTWEIGHT        0.1  /**< weight of integral support in cut score calculation */
 #define DEFAULT_MINORTHO                0.90 /**< minimal orthogonality for a cut to enter the LP */
 #define DEFAULT_MINORTHOROOT            0.90 /**< minimal orthogonality for a cut to enter the LP in the root node */
+
+#define MAXDENSEFACTOR                     4 /**< the dense array for computing parallelisms is only used if its size
+                                              *   is at most this factor times the number of LP columns plus the total
+                                              *   number of nonzeros of the cuts (column indices can be sparse, e.g.,
+                                              *   when columns are created and deleted in column generation) */
 
 /*
  * Data structures
@@ -194,11 +202,22 @@ SCIP_Real scoring(
 }
 
 
+/** compact data of a cut for computing its parallelism to other cuts */
+struct CutData
+{
+   int*                  colsidx;            /**< sorted column indices of the cut, or NULL if not usable */
+   SCIP_Real*            vals;               /**< coefficients of the cut, or NULL if not usable */
+   SCIP_Real             norm;               /**< Euclidean norm of the cut */
+   int                   len;                /**< number of nonzeros of the cut */
+};
+typedef struct CutData CUTDATA;
+
 /** move the cut with the highest score to the first position in the array; there must be at least one cut */
 static
 void selectBestCut(
    SCIP_ROW**            cuts,               /**< array with cuts to perform selection algorithm */
    SCIP_Real*            scores,             /**< array with scores of cuts to perform selection algorithm */
+   CUTDATA*              cutdata,            /**< array with compact data of the cuts, or NULL */
    int                   ncuts               /**< number of cuts in given array */
    )
 {
@@ -224,33 +243,111 @@ void selectBestCut(
 
    SCIPswapPointers((void**) &cuts[bestpos], (void**) &cuts[0]);
    SCIPswapReals(&scores[bestpos], &scores[0]);
+   if( cutdata != NULL )
+   {
+      CUTDATA tmp = cutdata[bestpos];
+      cutdata[bestpos] = cutdata[0];
+      cutdata[0] = tmp;
+   }
+}
+
+/** computes the compact data of a cut; the fast parallelism computation is only used for rows that are not linked to
+ *  any of their columns yet (as cuts before they enter the LP), because then SCIProwGetScalarProduct() sums the
+ *  products of all common columns that are in the LP in increasing order of the column index, which can be reproduced
+ *  exactly
+ */
+static
+void computeCutData(
+   SCIP_ROW*             row,                /**< cut */
+   CUTDATA*              data,               /**< pointer to store the compact data of the cut */
+   int*                  maxcolidx           /**< pointer to update the maximal column index of cuts with compact
+                                              *   data */
+   )
+{
+   assert(row != NULL);
+   assert(data != NULL);
+   assert(maxcolidx != NULL);
+
+   SCIProwSort(row);
+
+   data->norm = SCIProwGetNorm(row);
+   data->len = row->len;
+
+   if( row->len > 0 && row->nunlinked == row->len && row->nlpcols == 0 && row->nonlpcolssorted && data->norm > 0.0 )
+   {
+      data->colsidx = row->cols_index;
+      data->vals = row->vals;
+      *maxcolidx = MAX(*maxcolidx, row->cols_index[row->len - 1]);
+   }
+   else
+   {
+      data->colsidx = NULL;
+      data->vals = NULL;
+   }
 }
 
 /** filters the given array of cuts to enforce a maximum parallelism constraint
- *  w.r.t the given cut; moves filtered cuts to the end of the array and returns number of selected cuts */
+ *  w.r.t the given cut; moves filtered cuts to the end of the array and returns number of selected cuts
+ *
+ *  If compact data of the given cut and a dense array are available, the given cut is scattered into the dense array
+ *  (only its columns in the LP, as in SCIProwGetScalarProduct()), and the scalar products with cuts that have compact
+ *  data are computed by gathering in increasing order of the column index, which gives the same result as
+ *  SCIProwGetParallelism() without merging the two rows and without accessing the row data of the other cut.
+ */
 static
 int filterWithParallelism(
    SCIP_ROW*             cut,                /**< cut to filter orthogonality with */
+   CUTDATA*              data,               /**< compact data of the cut, or NULL */
+   SCIP_Real*            dense,              /**< clean dense array indexed by column index, or NULL */
    SCIP_ROW**            cuts,               /**< array with cuts to perform selection algorithm */
    SCIP_Real*            scores,             /**< array with scores of cuts to perform selection algorithm */
+   CUTDATA*              cutdata,            /**< array with compact data of the cuts, or NULL */
    int                   ncuts,              /**< number of cuts in given array */
    SCIP_Real             goodscore,          /**< threshold for the score to be considered a good cut */
    SCIP_Real             goodmaxparall,      /**< maximal parallelism for good cuts */
    SCIP_Real             maxparall           /**< maximal parallelism for all cuts that are not good */
    )
 {
+   SCIP_Bool usedense;
    int i;
 
    assert( cut != NULL );
    assert( ncuts == 0 || cuts != NULL );
    assert( ncuts == 0 || scores != NULL );
 
+   usedense = (data != NULL && data->colsidx != NULL && dense != NULL && cutdata != NULL);
+
+   /* scatter the columns of the cut that are in the LP */
+   if( usedense )
+   {
+      int j;
+
+      for( j = 0; j < data->len; ++j )
+      {
+         if( cut->cols[j]->lppos >= 0 )
+            dense[data->colsidx[j]] = data->vals[j];
+      }
+   }
+
    for( i = ncuts - 1; i >= 0; --i )
    {
       SCIP_Real thisparall;
       SCIP_Real thismaxparall;
 
-      thisparall = SCIProwGetParallelism(cut, cuts[i], 'e');
+      if( usedense && cutdata[i].colsidx != NULL )
+      {
+         SCIP_Real scalarprod = 0.0;
+         int j;
+
+         for( j = 0; j < cutdata[i].len; ++j )
+            scalarprod += dense[cutdata[i].colsidx[j]] * cutdata[i].vals[j];
+
+         thisparall = (scalarprod == 0.0 ? 0.0 : REALABS(scalarprod) / (data->norm * cutdata[i].norm));
+         assert(thisparall == SCIProwGetParallelism(cut, cuts[i], 'e')); /*lint !e777*/
+      }
+      else
+         thisparall = SCIProwGetParallelism(cut, cuts[i], 'e');
+
       thismaxparall = scores[i] >= goodscore ? goodmaxparall : maxparall;
 
       if( thisparall > thismaxparall )
@@ -258,7 +355,22 @@ int filterWithParallelism(
          --ncuts;
          SCIPswapPointers((void**) &cuts[i], (void**) &cuts[ncuts]);
          SCIPswapReals(&scores[i], &scores[ncuts]);
+         if( cutdata != NULL )
+         {
+            CUTDATA tmp = cutdata[i];
+            cutdata[i] = cutdata[ncuts];
+            cutdata[ncuts] = tmp;
+         }
       }
+   }
+
+   /* clean the dense array */
+   if( usedense )
+   {
+      int j;
+
+      for( j = 0; j < data->len; ++j )
+         dense[data->colsidx[j]] = 0.0;
    }
 
    return ncuts;
@@ -457,6 +569,11 @@ SCIP_RETCODE SCIPselectCutsHybrid(
 {
    SCIP_Real* scores;
    SCIP_Real* scoresptr;
+   CUTDATA* cutdata;
+   CUTDATA* cutdataptr;
+   SCIP_Real* dense;
+   SCIP_Longint totalnnz;
+   int maxcolidx;
    SCIP_Real maxforcedscores;
    SCIP_Real maxnonforcedscores;
    SCIP_Real goodscore;
@@ -481,22 +598,48 @@ SCIP_RETCODE SCIPselectCutsHybrid(
    badscore = goodscore * badscorefac;
    goodscore *= goodscorefac;
 
+   /* compute compact data of the cuts and a clean dense array for computing parallelisms */
+   SCIP_CALL( SCIPallocBufferArray(scip, &cutdata, ncuts) );
+   maxcolidx = -1;
+   totalnnz = 0;
+   for( i = 0; i < ncuts; ++i )
+   {
+      computeCutData(cuts[i], &cutdata[i], &maxcolidx);
+      totalnnz += cutdata[i].len;
+   }
+
+   dense = NULL;
+   if( maxcolidx >= 0 && (SCIP_Longint)maxcolidx < MAXDENSEFACTOR * ((SCIP_Longint)SCIPgetNLPCols(scip) + totalnnz) )
+   {
+      SCIP_CALL( SCIPallocCleanBufferArray(scip, &dense, maxcolidx + 1) );
+   }
+
    /* perform cut selection algorithm for the cuts */
 
    /* forced cuts are going to be selected so use them to filter cuts */
    for( i = 0; i < nforcedcuts && ncuts > 0; ++i )
    {
-      ncuts = filterWithParallelism(forcedcuts[i], cuts, scores, ncuts, goodscore, goodmaxparall, maxparall);
+      CUTDATA forceddata;
+      int forcedmaxcolidx = -1;
+
+      computeCutData(forcedcuts[i], &forceddata, &forcedmaxcolidx);
+
+      /* the dense array only covers the columns of the cuts */
+      ncuts = filterWithParallelism(forcedcuts[i], forcedmaxcolidx <= maxcolidx ? &forceddata : NULL, dense, cuts,
+         scores, cutdata, ncuts, goodscore, goodmaxparall, maxparall);
    }
 
    /* now greedily select the remaining cuts */
    scoresptr = scores;
+   cutdataptr = cutdata;
    while( ncuts > 0 )
    {
       SCIP_ROW* selectedcut;
+      CUTDATA selecteddata;
 
-      selectBestCut(cuts, scores, ncuts);
+      selectBestCut(cuts, scores, cutdata, ncuts);
       selectedcut = cuts[0];
+      selecteddata = cutdata[0];
 
       /* if the best cut of the remaining cuts is considered bad, we discard it and all remaining cuts */
       if( scores[0] < badscore )
@@ -511,11 +654,18 @@ SCIP_RETCODE SCIPselectCutsHybrid(
       /* move the pointers to the next position and filter the remaining cuts to enforce the maximum parallelism constraint */
       ++cuts;
       ++scores;
+      ++cutdata;
       --ncuts;
 
-      ncuts = filterWithParallelism(selectedcut, cuts, scores, ncuts, goodscore, goodmaxparall, maxparall);
+      ncuts = filterWithParallelism(selectedcut, &selecteddata, dense, cuts, scores, cutdata, ncuts, goodscore,
+         goodmaxparall, maxparall);
    }
 
+   if( dense != NULL )
+   {
+      SCIPfreeCleanBufferArray(scip, &dense);
+   }
+   SCIPfreeBufferArray(scip, &cutdataptr);
    SCIPfreeBufferArray(scip, &scoresptr);
 
    return SCIP_OKAY;
