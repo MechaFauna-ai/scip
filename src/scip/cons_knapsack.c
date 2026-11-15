@@ -105,8 +105,8 @@
 #define LINCONSUPGD_PRIORITY    +100000 /**< priority of the constraint handler for upgrading of linear constraints */
 
 #define MAX_USECLIQUES_SIZE        1000 /**< maximal number of items in knapsack where clique information is used */
-#define MAX_DISAGGR_CLIQUEINCIDENCES 100000 /**< maximal total number of clique incidences of the items for which a clique
-                                         *   partition is computed when disaggregating a knapsack; above, singletons are used */
+#define MAX_DISAGGR_CLIQUEINCIDENCES 100000 /**< maximal total number of clique incidences of the items for which a
+                                                 *   clique partition is computed when disaggregating a knapsack */
 #define MAX_ZEROITEMS_SIZE        10000 /**< maximal number of items to store in the zero list in preprocessing */
 
 #define KNAPSACKRELAX_MAXDELTA        0.1 /**< maximal allowed rounding distance for scaling in knapsack relaxation */
@@ -10663,7 +10663,8 @@ SCIP_RETCODE tightenWeights(
           */
          if( nincidences <= MAX_DISAGGR_CLIQUEINCIDENCES )
          {
-            SCIP_CALL( SCIPcalcCliquePartition(scip, &(consdata->vars[pos]), len, &conshdlrdata->probtoidxmap, &conshdlrdata->probtoidxmapsize, clqpart, &nclq) );
+            SCIP_CALL( SCIPcalcCliquePartition(scip, &(consdata->vars[pos]), len, &conshdlrdata->probtoidxmap,
+                  &conshdlrdata->probtoidxmapsize, clqpart, &nclq) );
          }
          else
          {
