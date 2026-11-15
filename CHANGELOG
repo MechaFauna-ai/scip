@@ -47,6 +47,8 @@ Performance improvements
   partition if the items are contained in more than 100000 cliques in total, since this computation could dominate presolving
 - the hash functions for detecting parallel linear, logicor, and and constraints combine all variable indices instead of
   only the first, middle, and last one, which avoids long collision chains for constraints with similar supports
+- the clique separator marks the cliques of a node once per adjacency query instead of merging clique lists for each
+  pair of nodes when no dense clique table is available
 - probing in presolving records per probing only the variables whose bounds changed instead of copying and comparing
   the bounds of all variables; same deductions, less work per probing
 

@@ -112,6 +112,11 @@ struct TCLIQUE_Graph
    int*                  adjnodes;           /**< adjacent nodes of edges */
    unsigned int*         cliqueids;          /**< unique ids of cliques */
    unsigned int*         cliquetable;        /**< dense bitvector clique table (array stored as a vector) */
+   int*                  cliqueidxs;         /**< dense indices in [0,ncliqueidxs) of the cliques in cliqueids (only
+                                              *   if no dense clique table exists) */
+   unsigned int*         cliquemarks;        /**< marks of the cliques by dense index, used in tcliqueSelectadjnodesClique() */
+   unsigned int          cliquemarkstamp;    /**< current stamp of the clique marks */
+   int                   ncliqueidxs;        /**< number of distinct cliques in the cliqueids array */
    int                   adjnodessize;       /**< size of adjnodes array */
    int                   cliqueidssize;      /**< size of cliqueids array */
    int                   nnodes;             /**< number of nodes in graph */
@@ -152,6 +157,10 @@ SCIP_RETCODE tcliquegraphCreate(
    (*tcliquegraph)->adjnodes = NULL;
    (*tcliquegraph)->cliqueids = NULL;
    (*tcliquegraph)->cliquetable = NULL;
+   (*tcliquegraph)->cliqueidxs = NULL;
+   (*tcliquegraph)->cliquemarks = NULL;
+   (*tcliquegraph)->cliquemarkstamp = 0;
+   (*tcliquegraph)->ncliqueidxs = 0;
    (*tcliquegraph)->adjnodessize = 0;
    (*tcliquegraph)->cliqueidssize = 0;
    (*tcliquegraph)->nnodes = 0;
@@ -187,6 +196,8 @@ SCIP_RETCODE tcliquegraphFree(
    SCIPfreeMemoryArrayNull(scip, &(*tcliquegraph)->adjnodes);
    SCIPfreeMemoryArrayNull(scip, &(*tcliquegraph)->cliqueids);
    SCIPfreeMemoryArrayNull(scip, &(*tcliquegraph)->cliquetable);
+   SCIPfreeMemoryArrayNull(scip, &(*tcliquegraph)->cliqueidxs);
+   SCIPfreeMemoryArrayNull(scip, &(*tcliquegraph)->cliquemarks);
    SCIPfreeBlockMemory(scip, tcliquegraph);
 
    return SCIP_OKAY;
@@ -454,6 +465,59 @@ SCIP_RETCODE tcliquegraphConstructCliqueTable(
    return SCIP_OKAY;
 }
 
+/** computes dense indices of the cliques in the cliqueids array and allocates the clique marks, which are used to
+ *  test the nodes of a set for a common clique with a given node, if no dense clique table exists
+ */
+static
+SCIP_RETCODE tcliquegraphConstructCliqueIdxs(
+   SCIP*                 scip,               /**< SCIP data structure */
+   TCLIQUE_GRAPH*        tcliquegraph        /**< tclique graph data */
+   )
+{
+   unsigned int* sortedids;
+   int nentries;
+   int ndistinct;
+   int i;
+
+   assert(tcliquegraph != NULL);
+   assert(tcliquegraph->cliquetable == NULL);
+   assert(tcliquegraph->cliqueidxs == NULL);
+
+   nentries = tcliquegraph->cliqueidsidxs[tcliquegraph->nnodes];
+   if( nentries == 0 )
+      return SCIP_OKAY;
+
+   /* collect the distinct clique ids in sorted order */
+   SCIP_CALL( SCIPduplicateBufferArray(scip, &sortedids, tcliquegraph->cliqueids, nentries) );
+   SCIPsortInt((int*)sortedids, nentries);
+   ndistinct = 0;
+   for( i = 0; i < nentries; ++i )
+   {
+      if( ndistinct == 0 || sortedids[ndistinct-1] != sortedids[i] )
+         sortedids[ndistinct++] = sortedids[i];
+   }
+
+   /* map each entry to the position of its clique id among the distinct ids */
+   SCIP_CALL( SCIPallocMemoryArray(scip, &tcliquegraph->cliqueidxs, nentries) );
+   for( i = 0; i < nentries; ++i )
+   {
+      int pos;
+
+      (void) SCIPsortedvecFindInt((int*)sortedids, (int)tcliquegraph->cliqueids[i], ndistinct, &pos);
+      assert(0 <= pos && pos < ndistinct);
+      assert(sortedids[pos] == tcliquegraph->cliqueids[i]);
+      tcliquegraph->cliqueidxs[i] = pos;
+   }
+
+   SCIP_CALL( SCIPallocClearMemoryArray(scip, &tcliquegraph->cliquemarks, ndistinct) );
+   tcliquegraph->cliquemarkstamp = 0;
+   tcliquegraph->ncliqueidxs = ndistinct;
+
+   SCIPfreeBufferArray(scip, &sortedids);
+
+   return SCIP_OKAY;
+}
+
 /** creates tclique data structure using the implication graph;
  *  only variables that are contained in a 3-clique are added as nodes to the clique graph
  */
@@ -494,6 +558,12 @@ SCIP_RETCODE loadTcliquegraph(
    {
       /* construct the dense clique table */
       SCIP_CALL( tcliquegraphConstructCliqueTable(scip, sepadata->tcliquegraph, sepadata->cliquetablemem, sepadata->cliquedensity) );
+
+      /* without a dense clique table, prepare clique marks to speed up the common clique tests */
+      if( sepadata->tcliquegraph->cliquetable == NULL )
+      {
+         SCIP_CALL( tcliquegraphConstructCliqueIdxs(scip, sepadata->tcliquegraph) );
+      }
    }
 
    /* free temporary memory */
@@ -655,6 +725,8 @@ static
 TCLIQUE_SELECTADJNODES(tcliqueSelectadjnodesClique)
 {
    int* graphadjnodes;
+   unsigned int stamp;
+   SCIP_Bool usemarks;
    int nadjnodes;
    int nodeadjindex;
    int nodeadjend;
@@ -666,6 +738,32 @@ TCLIQUE_SELECTADJNODES(tcliqueSelectadjnodesClique)
    assert(adjnodes != NULL);
 
    nadjnodes = 0;
+
+   /* without a dense clique table, mark the cliques of the given node, so that testing a node of the set for a common
+    * clique only needs to look at the cliques of that node
+    */
+   usemarks = (tcliquegraph->cliquetable == NULL && tcliquegraph->cliqueidxs != NULL);
+   if( usemarks )
+   {
+      int j;
+
+      /* reset marks when the stamp overflows */
+      if( tcliquegraph->cliquemarkstamp == UINT_MAX )
+      {
+         BMSclearMemoryArray(tcliquegraph->cliquemarks, tcliquegraph->ncliqueidxs);
+         tcliquegraph->cliquemarkstamp = 0;
+      }
+      ++tcliquegraph->cliquemarkstamp;
+      stamp = tcliquegraph->cliquemarkstamp;
+
+      for( j = tcliquegraph->cliqueidsidxs[node]; j < tcliquegraph->cliqueidsidxs[node+1]; ++j )
+      {
+         assert(0 <= tcliquegraph->cliqueidxs[j] && tcliquegraph->cliqueidxs[j] < tcliquegraph->ncliqueidxs);
+         tcliquegraph->cliquemarks[tcliquegraph->cliqueidxs[j]] = stamp;
+      }
+   }
+   else
+      stamp = 0;
 
    /* check for each node in given nodes set, if it is adjacent to the given node or shares a common clique */
    graphadjnodes = tcliquegraph->adjnodes;
@@ -687,7 +785,21 @@ TCLIQUE_SELECTADJNODES(tcliqueSelectadjnodesClique)
       else
       {
          /* current node is not adjacent to given node: check if they share a common clique */
-         if( nodesHaveCommonClique(tcliquegraph, node, nodes[i]) )
+         SCIP_Bool common;
+
+         if( usemarks )
+         {
+            int j;
+
+            common = (node == nodes[i]);
+            for( j = tcliquegraph->cliqueidsidxs[nodes[i]]; j < tcliquegraph->cliqueidsidxs[nodes[i]+1] && !common; ++j )
+               common = (tcliquegraph->cliquemarks[tcliquegraph->cliqueidxs[j]] == stamp);
+            assert(common == nodesHaveCommonClique(tcliquegraph, node, nodes[i]));
+         }
+         else
+            common = nodesHaveCommonClique(tcliquegraph, node, nodes[i]);
+
+         if( common )
          {
             adjnodes[nadjnodes] = nodes[i];
             nadjnodes++;
