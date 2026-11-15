@@ -76,7 +76,7 @@
 #define SEPA_USESSUBSCIP          FALSE /**< does the separator use a secondary SCIP instance? */
 #define SEPA_DELAY                FALSE /**< should separation method be delayed, if other separators found cuts? */
 
-#define DEFAULT_MAXMACHINES           1 /**< maximal number of machines (job sets) to detect */
+#define DEFAULT_MAXMACHINES         100 /**< maximal number of machines (job sets) to detect */
 #define DEFAULT_MINJOBS               3 /**< minimal number of jobs on a machine */
 #define MAXORDCOLS               200000 /**< maximal number of columns for which order records are kept */
 #define DEFAULT_ORDEREQUALITIES    TRUE /**< should binary variables determining the same order be identified? */
