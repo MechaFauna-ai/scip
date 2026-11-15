@@ -49,6 +49,8 @@ Performance improvements
   only the first, middle, and last one, which avoids long collision chains for constraints with similar supports
 - the clique separator marks the cliques of a node once per adjacency query instead of merging clique lists for each
   pair of nodes when no dense clique table is available
+- the hybrid cut selector computes the parallelism of the selected cut to cuts that are not yet linked to their columns
+  by scattering the selected cut into a dense array instead of merging the rows; the selected cuts are unchanged
 - probing in presolving records per probing only the variables whose bounds changed instead of copying and comparing
   the bounds of all variables; same deductions, less work per probing
 
