@@ -122,6 +122,7 @@ Interface changes
 
 - `separating/machinesched/maxmachines`: maximal number of machines (sets of pairwise ordered jobs) to detect
 - `separating/machinesched/minjobs`: minimal number of jobs on a machine
+- `separating/machinesched/orderequalities`: should binary variables that determine the order of the same pair of jobs be identified via cliques?
 - `branching/relpscost/sbiterquotrestart`: factor for the strong branching LP iteration budget as long as at most `sbiterrestarts` restarts have been performed
 - `branching/relpscost/sbiterrestarts`: maximal number of performed restarts for which the strong branching LP iteration budget is scaled by `sbiterquotrestart` (-1: no scaling)
 - `branching/relpscost/maxinititer`: maximal iteration limit for strong branching initializations of pseudo cost entries if it is computed automatically (`inititer` = 0)

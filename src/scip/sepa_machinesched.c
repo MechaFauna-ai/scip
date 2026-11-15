@@ -64,6 +64,7 @@
 #include "scip/scip_sepa.h"
 #include "scip/scip_solvingstats.h"
 #include "scip/scip_tree.h"
+#include "scip/scip_var.h"
 #include "scip/sepa_machinesched.h"
 #include <string.h>
 
@@ -77,12 +78,15 @@
 
 #define DEFAULT_MAXMACHINES           1 /**< maximal number of machines (job sets) to detect */
 #define DEFAULT_MINJOBS               3 /**< minimal number of jobs on a machine */
+#define MAXORDCOLS               200000 /**< maximal number of columns for which order records are kept */
+#define DEFAULT_ORDEREQUALITIES    TRUE /**< should binary variables determining the same order be identified? */
 
 /** separator data */
 struct SCIP_SepaData
 {
    int                   maxmachines;        /**< maximal number of machines (job sets) to detect */
    int                   minjobs;            /**< minimal number of jobs on a machine */
+   SCIP_Bool             orderequalities;    /**< should binary variables determining the same order be identified? */
    SCIP_Bool             tried;              /**< was the detection already performed in this run? */
    int                   ncuts;              /**< number of cuts generated */
    int                   nmachines;          /**< number of machines detected */
@@ -100,6 +104,11 @@ typedef struct Arcs
    int                   size;               /**< size of the arrays */
    SCIP_HASHMAP*         map;                /**< map from (from, to) to the arc index */
    int                   ncols;              /**< number of LP columns (for the map key) */
+   SCIP_Longint*         ordkeys;            /**< order records with u < v: ((u * ncols + v) * ncols + bin) * 16 + bits,
+                                              *   bits: 1: u -> v if bin = 0, 2: u -> v if bin = 1, 4: v -> u if bin = 0,
+                                              *   8: v -> u if bin = 1 */
+   int                   nords;              /**< number of order records */
+   int                   ordsize;            /**< size of the order record arrays */
 } ARCS;
 
 /*
@@ -209,6 +218,33 @@ SCIP_RETCODE tryAddArc(
       SCIP_CALL( addArc(scip, arcs, negjob, posjob, bin, d1, TRUE) );
    }
 
+   /* record which value of the binary variable implies which order of the two jobs (if the key fits) */
+   if( arcs->ncols > MAXORDCOLS )
+      return SCIP_OKAY;
+
+   if( arcs->nords == arcs->ordsize )
+   {
+      int newsize = SCIPcalcMemGrowSize(scip, arcs->nords + 1);
+
+      SCIP_CALL( SCIPreallocBufferArray(scip, &arcs->ordkeys, newsize) );
+      arcs->ordsize = newsize;
+   }
+   {
+      int u = MIN(negjob, posjob);
+      int v = MAX(negjob, posjob);
+      SCIP_Bool val = (d0 <= d1);
+
+      int bits;
+
+      /* arc negjob -> posjob */
+      if( negjob == u )
+         bits = val ? 2 : 1;
+      else
+         bits = val ? 8 : 4;
+      arcs->ordkeys[arcs->nords] = (((SCIP_Longint)u * arcs->ncols + v) * arcs->ncols + bin) * 16 + bits;
+      ++arcs->nords;
+   }
+
    return SCIP_OKAY;
 }
 
@@ -304,6 +340,90 @@ SCIP_RETCODE collectArcs(
          SCIP_Real d = -(rhs - SCIProwGetConstant(row)) / scale;
 
          SCIP_CALL( tryAddArc(scip, arcs, neg, pos, bin, d, d + bincoef) );
+      }
+   }
+
+   return SCIP_OKAY;
+}
+
+/** adds cliques forcing binary variables that determine the order of the same pair of jobs to be equal (or
+ *  complementary): if y = 0 implies u before v and y = 1 implies v before u, then y is determined by the order
+ */
+static
+SCIP_RETCODE addOrderEqualities(
+   SCIP*                 scip,               /**< SCIP data structure */
+   ARCS*                 arcs,               /**< arcs */
+   SCIP_COL**            cols,               /**< LP columns */
+   SCIP_Bool*            cutoff,             /**< pointer to store whether a cutoff was detected */
+   int*                  nbdchgs             /**< pointer to count bound changes */
+   )
+{
+   SCIP_Longint pairkey = -1;
+   int basebin = -1;
+   SCIP_Bool baseval = FALSE;
+   int i;
+
+   if( arcs->nords < 2 )
+      return SCIP_OKAY;
+
+   SCIPsortLong(arcs->ordkeys, arcs->nords);
+
+   i = 0;
+   while( i < arcs->nords && !(*cutoff) )
+   {
+      SCIP_Longint key = arcs->ordkeys[i] / 16;
+      int bits = 0;
+      int bin;
+
+      /* combine the bits of the records of the same (u, v, bin) */
+      while( i < arcs->nords && arcs->ordkeys[i] / 16 == key )
+         bits |= (int)(arcs->ordkeys[i++] % 16);
+
+      bin = (int)(key % arcs->ncols);
+
+      if( key / arcs->ncols != pairkey )
+      {
+         pairkey = key / arcs->ncols;
+         basebin = -1;
+      }
+
+      /* bin = 0 => u -> v and bin = 1 => v -> u, or bin = 1 => u -> v and bin = 0 => v -> u */
+      if( (bits & 9) == 9 || (bits & 6) == 6 )
+      {
+         SCIP_Bool val = ((bits & 6) == 6);
+
+         if( basebin < 0 )
+         {
+            basebin = bin;
+            baseval = val;
+         }
+         else if( bin != basebin )
+         {
+            SCIP_VAR* vars[2];
+            SCIP_Bool vals[2];
+            SCIP_Bool infeasible;
+            int nchg;
+
+            /* literal (basebin == baseval) is equivalent to literal (bin == val) */
+            vars[0] = SCIPcolGetVar(cols[basebin]);
+            vars[1] = SCIPcolGetVar(cols[bin]);
+            vals[0] = baseval;
+            vals[1] = !val;
+            SCIP_CALL( SCIPaddClique(scip, vars, vals, 2, FALSE, &infeasible, &nchg) );
+            *nbdchgs += nchg;
+            if( infeasible )
+            {
+               *cutoff = TRUE;
+               break;
+            }
+
+            vals[0] = !baseval;
+            vals[1] = val;
+            SCIP_CALL( SCIPaddClique(scip, vars, vals, 2, FALSE, &infeasible, &nchg) );
+            *nbdchgs += nchg;
+            if( infeasible )
+               *cutoff = TRUE;
+         }
       }
    }
 
@@ -542,6 +662,7 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpMachinesched)
    SCIP_COL** cols;
    SCIP_Bool cutoff;
    ARCS arcs;
+   int nbdchgs;
    int ncols;
    int ncuts;
 
@@ -572,12 +693,18 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpMachinesched)
 
    cutoff = FALSE;
    ncuts = 0;
-   if( arcs.narcs >= 3 )
+   nbdchgs = 0;
+   if( sepadata->orderequalities )
+   {
+      SCIP_CALL( addOrderEqualities(scip, &arcs, cols, &cutoff, &nbdchgs) );
+   }
+   if( !cutoff && arcs.narcs >= 3 )
    {
       SCIP_CALL( detectMachines(scip, sepa, sepadata, &arcs, cols, ncols, &cutoff, &ncuts) );
    }
 
    SCIPhashmapFree(&arcs.map);
+   SCIPfreeBufferArrayNull(scip, &arcs.ordkeys);
    SCIPfreeBufferArrayNull(scip, &arcs.val);
    SCIPfreeBufferArrayNull(scip, &arcs.p);
    SCIPfreeBufferArrayNull(scip, &arcs.bin);
@@ -588,6 +715,8 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpMachinesched)
 
    if( cutoff )
       *result = SCIP_CUTOFF;
+   else if( nbdchgs > 0 )
+      *result = SCIP_REDUCEDDOM;
    else if( ncuts > 0 )
       *result = SCIP_SEPARATED;
 
@@ -624,6 +753,10 @@ SCIP_RETCODE SCIPincludeSepaMachinesched(
    SCIP_CALL( SCIPaddIntParam(scip, "separating/" SEPA_NAME "/minjobs",
          "minimal number of jobs on a machine",
          &sepadata->minjobs, TRUE, DEFAULT_MINJOBS, 2, INT_MAX, NULL, NULL) );
+
+   SCIP_CALL( SCIPaddBoolParam(scip, "separating/" SEPA_NAME "/orderequalities",
+         "should binary variables that determine the order of the same pair of jobs be identified via cliques?",
+         &sepadata->orderequalities, TRUE, DEFAULT_ORDEREQUALITIES, NULL, NULL) );
 
    return SCIP_OKAY;
 }
