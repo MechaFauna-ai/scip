@@ -57,6 +57,11 @@
 #define DEFAULT_MINORTHO                0.90 /**< minimal orthogonality for a cut to enter the LP */
 #define DEFAULT_MINORTHOROOT            0.90 /**< minimal orthogonality for a cut to enter the LP in the root node */
 
+#define MAXDENSEFACTOR                     4 /**< the dense array for computing parallelisms is only used if its size
+                                              *   is at most this factor times the number of LP columns plus the total
+                                              *   number of nonzeros of the cuts (column indices can be sparse, e.g.,
+                                              *   when columns are created and deleted in column generation) */
+
 /*
  * Data structures
  */
@@ -567,6 +572,7 @@ SCIP_RETCODE SCIPselectCutsHybrid(
    CUTDATA* cutdata;
    CUTDATA* cutdataptr;
    SCIP_Real* dense;
+   SCIP_Longint totalnnz;
    int maxcolidx;
    SCIP_Real maxforcedscores;
    SCIP_Real maxnonforcedscores;
@@ -595,11 +601,15 @@ SCIP_RETCODE SCIPselectCutsHybrid(
    /* compute compact data of the cuts and a clean dense array for computing parallelisms */
    SCIP_CALL( SCIPallocBufferArray(scip, &cutdata, ncuts) );
    maxcolidx = -1;
+   totalnnz = 0;
    for( i = 0; i < ncuts; ++i )
+   {
       computeCutData(cuts[i], &cutdata[i], &maxcolidx);
+      totalnnz += cutdata[i].len;
+   }
 
    dense = NULL;
-   if( maxcolidx >= 0 )
+   if( maxcolidx >= 0 && (SCIP_Longint)maxcolidx < MAXDENSEFACTOR * ((SCIP_Longint)SCIPgetNLPCols(scip) + totalnnz) )
    {
       SCIP_CALL( SCIPallocCleanBufferArray(scip, &dense, maxcolidx + 1) );
    }
