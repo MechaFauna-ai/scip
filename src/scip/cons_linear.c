@@ -12965,9 +12965,8 @@ static
 SCIP_DECL_HASHKEYVAL(hashKeyValLinearcons)
 {
    SCIP_CONSDATA* consdata;
-   int minidx;
-   int mididx;
-   int maxidx;
+   uint64_t idxhash;
+   int i;
 #ifndef NDEBUG
    SCIP* scip;
 
@@ -12982,12 +12981,15 @@ SCIP_DECL_HASHKEYVAL(hashKeyValLinearcons)
 
    assert(consdata->indexsorted);
 
-   minidx = SCIPvarGetIndex(consdata->vars[0]);
-   mididx = SCIPvarGetIndex(consdata->vars[consdata->nvars / 2]);
-   maxidx = SCIPvarGetIndex(consdata->vars[consdata->nvars - 1]);
+   /* using only the variable indices as hash, since the values are compared by epsilon; all indices are combined,
+    * since constraints that share their first, middle, and last variable but differ elsewhere are frequent and would
+    * otherwise collide and have to be compared variable by variable
+    */
+   idxhash = 0;
+   for( i = 0; i < consdata->nvars; ++i )
+      idxhash = (idxhash + (uint64_t)(uint32_t)SCIPvarGetIndex(consdata->vars[i])) * UINT64_C(0x9e3779b97f4a7c15);
 
-   /* using only the variable indices as hash, since the values are compared by epsilon */
-   return SCIPhashFour(consdata->nvars, minidx, mididx, maxidx);
+   return SCIPhashThree(consdata->nvars, (uint32_t)idxhash, (uint32_t)(idxhash >> 32));
 }
 
 /** returns the key for deciding which of two parallel constraints should be kept (smaller key should be kept);
