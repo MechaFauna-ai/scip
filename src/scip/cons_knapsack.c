@@ -105,6 +105,8 @@
 #define LINCONSUPGD_PRIORITY    +100000 /**< priority of the constraint handler for upgrading of linear constraints */
 
 #define MAX_USECLIQUES_SIZE        1000 /**< maximal number of items in knapsack where clique information is used */
+#define MAX_DISAGGR_CLIQUEINCIDENCES 100000 /**< maximal total number of clique incidences of the items for which a
+                                                 *   clique partition is computed when disaggregating a knapsack */
 #define MAX_ZEROITEMS_SIZE        10000 /**< maximal number of items to store in the zero list in preprocessing */
 
 #define KNAPSACKRELAX_MAXDELTA        0.1 /**< maximal allowed rounding distance for scaling in knapsack relaxation */
@@ -10601,6 +10603,7 @@ SCIP_RETCODE tightenWeights(
          SCIP_VAR** clqvars;
          SCIP_CONS* cliquecons;
          char name[SCIP_MAXSTRLEN];
+         SCIP_Longint nincidences;
          int* clqpart;
          int nclqvars;
          int nclq;
@@ -10637,8 +10640,38 @@ SCIP_RETCODE tightenWeights(
          /* allocate temporary memory */
          SCIP_CALL( SCIPallocBufferArray(scip, &clqpart, len) );
 
-         /* calculate clique partition */
-         SCIP_CALL( SCIPcalcCliquePartition(scip, &(consdata->vars[pos]), len, &conshdlrdata->probtoidxmap, &conshdlrdata->probtoidxmapsize, clqpart, &nclq) );
+         /* count the clique incidences of the items, since computing the clique partition scans all their cliques */
+         nincidences = 0;
+         for( w = pos; w < consdata->nvars && nincidences <= MAX_DISAGGR_CLIQUEINCIDENCES; ++w )
+         {
+            SCIP_VAR* var;
+            SCIP_Bool value;
+
+            var = consdata->vars[w];
+            value = TRUE;
+            if( SCIPvarIsNegated(var) )
+            {
+               var = SCIPvarGetNegationVar(var);
+               value = FALSE;
+            }
+            if( SCIPvarIsActive(var) )
+               nincidences += SCIPvarGetNCliques(var, value);
+         }
+
+         /* calculate clique partition; if the items are contained in too many cliques, this can dominate presolving, so
+          * use the partition into singletons instead, which is always valid
+          */
+         if( nincidences <= MAX_DISAGGR_CLIQUEINCIDENCES )
+         {
+            SCIP_CALL( SCIPcalcCliquePartition(scip, &(consdata->vars[pos]), len, &conshdlrdata->probtoidxmap,
+                  &conshdlrdata->probtoidxmapsize, clqpart, &nclq) );
+         }
+         else
+         {
+            for( w = 0; w < len; ++w )
+               clqpart[w] = w;
+            nclq = len;
+         }
          assert(nclq <= len);
 
 #ifndef NDEBUG
