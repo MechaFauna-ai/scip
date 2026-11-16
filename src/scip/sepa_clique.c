@@ -116,6 +116,11 @@ struct TCLIQUE_Graph
                                               *   if no dense clique table exists) */
    unsigned int*         cliquemarks;        /**< marks of the cliques by dense index, used in tcliqueSelectadjnodesClique() */
    unsigned int          cliquemarkstamp;    /**< current stamp of the clique marks */
+   int*                  cliquenodesidxs;    /**< indices in cliquenodes array of the first node of each dense clique
+                                              *   index (only if cliqueidxs exists) */
+   int*                  cliquenodes;        /**< nodes contained in the cliques, ordered by dense clique index */
+   unsigned int*         nodemarks;          /**< marks of the nodes, used in tcliqueSelectadjnodesClique() */
+   unsigned int          nodemarkstamp;      /**< current stamp of the node marks */
    int                   ncliqueidxs;        /**< number of distinct cliques in the cliqueids array */
    int                   adjnodessize;       /**< size of adjnodes array */
    int                   cliqueidssize;      /**< size of cliqueids array */
@@ -160,6 +165,10 @@ SCIP_RETCODE tcliquegraphCreate(
    (*tcliquegraph)->cliqueidxs = NULL;
    (*tcliquegraph)->cliquemarks = NULL;
    (*tcliquegraph)->cliquemarkstamp = 0;
+   (*tcliquegraph)->cliquenodesidxs = NULL;
+   (*tcliquegraph)->cliquenodes = NULL;
+   (*tcliquegraph)->nodemarks = NULL;
+   (*tcliquegraph)->nodemarkstamp = 0;
    (*tcliquegraph)->ncliqueidxs = 0;
    (*tcliquegraph)->adjnodessize = 0;
    (*tcliquegraph)->cliqueidssize = 0;
@@ -198,6 +207,9 @@ SCIP_RETCODE tcliquegraphFree(
    SCIPfreeMemoryArrayNull(scip, &(*tcliquegraph)->cliquetable);
    SCIPfreeMemoryArrayNull(scip, &(*tcliquegraph)->cliqueidxs);
    SCIPfreeMemoryArrayNull(scip, &(*tcliquegraph)->cliquemarks);
+   SCIPfreeMemoryArrayNull(scip, &(*tcliquegraph)->cliquenodesidxs);
+   SCIPfreeMemoryArrayNull(scip, &(*tcliquegraph)->cliquenodes);
+   SCIPfreeMemoryArrayNull(scip, &(*tcliquegraph)->nodemarks);
    SCIPfreeBlockMemory(scip, tcliquegraph);
 
    return SCIP_OKAY;
@@ -513,6 +525,29 @@ SCIP_RETCODE tcliquegraphConstructCliqueIdxs(
    tcliquegraph->cliquemarkstamp = 0;
    tcliquegraph->ncliqueidxs = ndistinct;
 
+   /* build the inverse mapping from the dense clique indices to the nodes contained in the cliques */
+   SCIP_CALL( SCIPallocClearMemoryArray(scip, &tcliquegraph->cliquenodesidxs, ndistinct + 1) );
+   SCIP_CALL( SCIPallocMemoryArray(scip, &tcliquegraph->cliquenodes, nentries) );
+   SCIP_CALL( SCIPallocClearMemoryArray(scip, &tcliquegraph->nodemarks, tcliquegraph->nnodes) );
+   tcliquegraph->nodemarkstamp = 0;
+   for( i = 0; i < nentries; ++i )
+      ++tcliquegraph->cliquenodesidxs[tcliquegraph->cliqueidxs[i] + 1];
+   for( i = 0; i < ndistinct; ++i )
+      tcliquegraph->cliquenodesidxs[i + 1] += tcliquegraph->cliquenodesidxs[i];
+   assert(tcliquegraph->cliquenodesidxs[ndistinct] == nentries);
+   {
+      int* fillpos;
+      int node;
+
+      SCIP_CALL( SCIPduplicateBufferArray(scip, &fillpos, tcliquegraph->cliquenodesidxs, ndistinct) );
+      for( node = 0; node < tcliquegraph->nnodes; ++node )
+      {
+         for( i = tcliquegraph->cliqueidsidxs[node]; i < tcliquegraph->cliqueidsidxs[node+1]; ++i )
+            tcliquegraph->cliquenodes[fillpos[tcliquegraph->cliqueidxs[i]]++] = node;
+      }
+      SCIPfreeBufferArray(scip, &fillpos);
+   }
+
    SCIPfreeBufferArray(scip, &sortedids);
 
    return SCIP_OKAY;
@@ -726,7 +761,9 @@ TCLIQUE_SELECTADJNODES(tcliqueSelectadjnodesClique)
 {
    int* graphadjnodes;
    unsigned int stamp;
+   unsigned int nodestamp;
    SCIP_Bool usemarks;
+   SCIP_Bool usenodemarks;
    int nadjnodes;
    int nodeadjindex;
    int nodeadjend;
@@ -743,7 +780,53 @@ TCLIQUE_SELECTADJNODES(tcliqueSelectadjnodesClique)
     * clique only needs to look at the cliques of that node
     */
    usemarks = (tcliquegraph->cliquetable == NULL && tcliquegraph->cliqueidxs != NULL);
+   usenodemarks = FALSE;
+   nodestamp = 0;
    if( usemarks )
+   {
+      int nodemarkcost;
+      int cliquemarkcost;
+      int j;
+
+      /* if the cliques of the given node have fewer entries than the cliques of the nodes in the set, mark the nodes
+       * in the cliques of the given node instead, so that testing a node of the set takes constant time
+       */
+      nodemarkcost = 0;
+      for( j = tcliquegraph->cliqueidsidxs[node]; j < tcliquegraph->cliqueidsidxs[node+1]; ++j )
+      {
+         int k = tcliquegraph->cliqueidxs[j];
+         nodemarkcost += tcliquegraph->cliquenodesidxs[k+1] - tcliquegraph->cliquenodesidxs[k];
+      }
+      cliquemarkcost = 0;
+      for( i = 0; i < nnodes && cliquemarkcost < nodemarkcost; ++i )
+         cliquemarkcost += tcliquegraph->cliqueidsidxs[nodes[i]+1] - tcliquegraph->cliqueidsidxs[nodes[i]];
+      usenodemarks = (nodemarkcost <= cliquemarkcost);
+   }
+
+   if( usenodemarks )
+   {
+      int j;
+
+      /* reset marks when the stamp overflows */
+      if( tcliquegraph->nodemarkstamp == UINT_MAX )
+      {
+         BMSclearMemoryArray(tcliquegraph->nodemarks, tcliquegraph->nnodes);
+         tcliquegraph->nodemarkstamp = 0;
+      }
+      ++tcliquegraph->nodemarkstamp;
+      nodestamp = tcliquegraph->nodemarkstamp;
+
+      for( j = tcliquegraph->cliqueidsidxs[node]; j < tcliquegraph->cliqueidsidxs[node+1]; ++j )
+      {
+         int k = tcliquegraph->cliqueidxs[j];
+         int l;
+
+         for( l = tcliquegraph->cliquenodesidxs[k]; l < tcliquegraph->cliquenodesidxs[k+1]; ++l )
+            tcliquegraph->nodemarks[tcliquegraph->cliquenodes[l]] = nodestamp;
+      }
+      stamp = 0;
+   }
+   else if( usemarks )
    {
       int j;
 
@@ -787,7 +870,12 @@ TCLIQUE_SELECTADJNODES(tcliqueSelectadjnodesClique)
          /* current node is not adjacent to given node: check if they share a common clique */
          SCIP_Bool common;
 
-         if( usemarks )
+         if( usenodemarks )
+         {
+            common = (node == nodes[i]) || (tcliquegraph->nodemarks[nodes[i]] == nodestamp);
+            assert(common == nodesHaveCommonClique(tcliquegraph, node, nodes[i]));
+         }
+         else if( usemarks )
          {
             int j;
 
