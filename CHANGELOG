@@ -99,6 +99,9 @@ Performance improvements
 Interface changes
 -----------------
 
+- in optimized builds (NDEBUG), SCIPvarGetSol() is now a macro whose var argument may be evaluated up to three times;
+  library callers must pass a side-effect-free variable argument. The exported function remains available for ABI
+  compatibility
 ### Deleted and changed API methods
 
 - SCIPcreateSymgraph() receives an additional argument to specify an epsilon value that is used for epsilon-comparisons
