@@ -142,7 +142,8 @@ SCIP_DECL_SORTINDCOMP(compCliquesSize)
 
 static
 int getCliqueUnfixedVars(
-   SCIP_CLIQUE*          clique
+   SCIP_CLIQUE*          clique,             /**< clique to count */
+   int                   minsize             /**< only counts larger than this need to be exact */
    )
 {
    SCIP_VAR** cliquevars;
@@ -160,7 +161,15 @@ int getCliqueUnfixedVars(
 
       /* is variable unfixed? */
       if( SCIPvarGetUbLocal(var) > SCIPvarGetLbLocal(var) + 0.5 )
+      {
          ++nunfixed;
+
+         /* A positive count that cannot beat the current best is sufficient.  Keep scanning all-fixed
+          * cliques so that the caller can still mark them as propagated.
+          */
+         if( nunfixed + (ncliquevars - v - 1) <= minsize )
+            break;
+      }
    }
 
    return nunfixed;
@@ -250,7 +259,7 @@ SCIP_RETCODE applyCliqueFixings(
       if( bestclique >= ncliques )
          break;
 
-      bestcliquesize = getCliqueUnfixedVars(cliques[permutation[bestclique]]);
+      bestcliquesize = getCliqueUnfixedVars(cliques[permutation[bestclique]], 0);
       assert(!propagated[permutation[bestclique]]);
 
       for( i = firstclique + 1; i < ncliques; ++i)
@@ -261,7 +270,7 @@ SCIP_RETCODE applyCliqueFixings(
          if( propagated[permutation[i]] )
             continue;
 
-         cliquesize = getCliqueUnfixedVars(cliques[permutation[i]]);
+         cliquesize = getCliqueUnfixedVars(cliques[permutation[i]], bestcliquesize);
 
          if( cliquesize > bestcliquesize )
          {
