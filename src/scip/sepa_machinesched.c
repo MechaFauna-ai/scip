@@ -450,6 +450,7 @@ SCIP_RETCODE detectMachines(
    )
 {
    SCIP_Bool* used;
+   SCIP_Bool* triedseed;
    SCIP_Real* proc;
    SCIP_Real* thresholds;
    SCIP_Real* keys;
@@ -459,6 +460,7 @@ SCIP_RETCODE detectMachines(
    int m;
 
    SCIP_CALL( SCIPallocClearBufferArray(scip, &used, ncols) );
+   SCIP_CALL( SCIPallocClearBufferArray(scip, &triedseed, ncols) );
    SCIP_CALL( SCIPallocBufferArray(scip, &degree, ncols) );
    SCIP_CALL( SCIPallocBufferArray(scip, &cands, ncols) );
    SCIP_CALL( SCIPallocBufferArray(scip, &keys, ncols) );
@@ -466,7 +468,8 @@ SCIP_RETCODE detectMachines(
    SCIP_CALL( SCIPallocBufferArray(scip, &proc, ncols) );
    SCIP_CALL( SCIPallocBufferArray(scip, &thresholds, ncols) );
 
-   for( m = 0; m < sepadata->maxmachines && !(*cutoff); ++m )
+   m = 0;
+   while( m < sepadata->maxmachines && !(*cutoff) )
    {
       SCIP_Real release;
       int largest;
@@ -486,7 +489,7 @@ SCIP_RETCODE detectMachines(
       largest = -1;
       for( i = 0; i < ncols; ++i )
       {
-         if( !used[i] && degree[i] > 0 && (largest < 0 || degree[i] > degree[largest]) )
+         if( !used[i] && !triedseed[i] && degree[i] > 0 && (largest < 0 || degree[i] > degree[largest]) )
             largest = i;
       }
 
@@ -545,8 +548,14 @@ SCIP_RETCODE detectMachines(
          jobs[njobs++] = col;
       }
 
+      /* if the greedy machine starting from this job is too small, try the next job as seed (the job may still be
+       * part of a machine found from another seed)
+       */
       if( njobs < sepadata->minjobs )
-         break;
+      {
+         triedseed[largest] = TRUE;
+         continue;
+      }
 
       ++sepadata->nmachines;
       SCIPdebugMsg(scip, "machine %d with %d jobs, release date %g\n", m, njobs, release);
@@ -636,6 +645,8 @@ SCIP_RETCODE detectMachines(
 
       for( i = 0; i < njobs; ++i )
          used[jobs[i]] = TRUE;
+
+      ++m;
    }
 
    SCIPfreeBufferArray(scip, &thresholds);
@@ -644,6 +655,7 @@ SCIP_RETCODE detectMachines(
    SCIPfreeBufferArray(scip, &keys);
    SCIPfreeBufferArray(scip, &cands);
    SCIPfreeBufferArray(scip, &degree);
+   SCIPfreeBufferArray(scip, &triedseed);
    SCIPfreeBufferArray(scip, &used);
 
    return SCIP_OKAY;
