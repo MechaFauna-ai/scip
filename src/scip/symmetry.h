@@ -338,6 +338,19 @@ SCIP_Bool isProperPerm(
    int                   nvars               /**< number of variables the permutation acts on */
    );
 
+/** creates a hash table of (signed) permutations that compares the first *permlen entries of the permutations
+ *
+ *  The permutations themselves are the elements and keys of the hash table, i.e., SCIPhashtableExists() can be called
+ *  with any array of length *permlen. The memory pointed to by permlen has to stay valid while the table is used.
+ */
+SCIP_EXPORT
+SCIP_RETCODE SCIPcreatePermHashtable(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_HASHTABLE**      permtable,          /**< pointer to store the hash table */
+   int*                  permlen,            /**< pointer to the number of entries to compare */
+   int                   tablesize           /**< initial size of the hash table */
+   );
+
 /** returns whether a permutation is already contained in a list of permutations */
 SCIP_EXPORT
 SCIP_Bool isPermKnown(

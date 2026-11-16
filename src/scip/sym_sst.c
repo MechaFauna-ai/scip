@@ -843,6 +843,7 @@ SCIP_RETCODE tryGenerateInvolutions(
    int*                  lennewperms         /**< pointer to store length of newperms */
    )
 {
+   SCIP_HASHTABLE* permtable;
    int* tmpperm;
    int* perm1;
    int* perm2;
@@ -872,6 +873,13 @@ SCIP_RETCODE tryGenerateInvolutions(
    *nnewperms = 0;
 
    SCIP_CALL( SCIPallocBufferArray(scip, &tmpperm, npermvars) );
+
+   /* store all known permutations in a hash table to avoid comparing new permutations with each of them */
+   SCIP_CALL( SCIPcreatePermHashtable(scip, &permtable, &npermvars, 2 * nperms + 100) );
+   for( p = 0; p < nperms; ++p )
+   {
+      SCIP_CALL( SCIPhashtableSafeInsert(permtable, (void*)perms[p]) );
+   }
 
    permlen = symtype == (int)SYM_SYMTYPE_PERM ? npermvars : 2 * npermvars; /*lint !e641*/
 
@@ -912,11 +920,13 @@ SCIP_RETCODE tryGenerateInvolutions(
             for( i = 0; i < npermvars; ++i )
                tmpperm[i] = perm1[perm2[i]];
 
-            if( isPermKnown(tmpperm, npermvars, perms, nperms) )
+            /* do not store the permutation if it is already known (among perms or newperms) */
+            if( SCIPhashtableExists(permtable, (void*)tmpperm) )
+            {
+               assert(isPermKnown(tmpperm, npermvars, perms, nperms) || isPermKnown(tmpperm, npermvars, *newperms, *nnewperms));
                continue;
-
-            if ( isPermKnown(tmpperm, npermvars, *newperms, *nnewperms) )
-               continue;
+            }
+            assert(!isPermKnown(tmpperm, npermvars, perms, nperms) && !isPermKnown(tmpperm, npermvars, *newperms, *nnewperms));
 
             if( dynamicmemsize && *nnewperms == *lennewperms )
             {
@@ -928,6 +938,7 @@ SCIP_RETCODE tryGenerateInvolutions(
             SCIP_CALL( SCIPallocBlockMemoryArray(scip, &(*newperms)[*nnewperms], permlen) );
             for( i = 0; i < permlen; ++i )
                (*newperms)[*nnewperms][i] = perm1[perm2[i]];
+            SCIP_CALL( SCIPhashtableSafeInsert(permtable, (void*)(*newperms)[*nnewperms]) );
             ++(*nnewperms);
          }
          else
@@ -940,11 +951,13 @@ SCIP_RETCODE tryGenerateInvolutions(
              * (also for signed permutations, it is sufficient to iterate over the first npermvars
              *  entries, because the permutation on the negated variables can be derived from these entries)
              */
-            if( isPermKnown(tmpperm, npermvars, perms, nperms) )
+            /* do not store the permutation if it is already known (among perms or newperms) */
+            if( SCIPhashtableExists(permtable, (void*)tmpperm) )
+            {
+               assert(isPermKnown(tmpperm, npermvars, perms, nperms) || isPermKnown(tmpperm, npermvars, *newperms, *nnewperms));
                continue;
-
-            if( isPermKnown(tmpperm, npermvars, *newperms, *nnewperms) )
-               continue;
+            }
+            assert(!isPermKnown(tmpperm, npermvars, perms, nperms) && !isPermKnown(tmpperm, npermvars, *newperms, *nnewperms));
 
             /* we do not know the permutation yet, store it */
             if( dynamicmemsize && *nnewperms == *lennewperms )
@@ -957,6 +970,7 @@ SCIP_RETCODE tryGenerateInvolutions(
             SCIP_CALL( SCIPallocBlockMemoryArray(scip, &(*newperms)[*nnewperms], permlen) );
             for( i = 0; i < permlen; ++i )
                (*newperms)[*nnewperms][i] = perm1[perm2[perm1[i]]];
+            SCIP_CALL( SCIPhashtableSafeInsert(permtable, (void*)(*newperms)[*nnewperms]) );
             ++(*nnewperms);
 
             if( !dynamicmemsize && *nnewperms == *lennewperms )
@@ -967,11 +981,13 @@ SCIP_RETCODE tryGenerateInvolutions(
                tmpperm[i] = perm2[perm1[perm2[i]]];
 
             /* do not store the permutation if it is already known */
-            if( isPermKnown(tmpperm, npermvars, perms, nperms) )
+            /* do not store the permutation if it is already known (among perms or newperms) */
+            if( SCIPhashtableExists(permtable, (void*)tmpperm) )
+            {
+               assert(isPermKnown(tmpperm, npermvars, perms, nperms) || isPermKnown(tmpperm, npermvars, *newperms, *nnewperms));
                continue;
-
-            if ( isPermKnown(tmpperm, npermvars, *newperms, *nnewperms) )
-               continue;
+            }
+            assert(!isPermKnown(tmpperm, npermvars, perms, nperms) && !isPermKnown(tmpperm, npermvars, *newperms, *nnewperms));
 
             /* recompute permutation, because we possibly also need the entries for negated variables */
             if( dynamicmemsize && *nnewperms == *lennewperms )
@@ -982,6 +998,7 @@ SCIP_RETCODE tryGenerateInvolutions(
             SCIP_CALL( SCIPallocBlockMemoryArray(scip, &(*newperms)[*nnewperms], permlen) );
             for( i = 0; i < permlen; ++i )
                (*newperms)[*nnewperms][i] = perm2[perm1[perm2[i]]];
+            SCIP_CALL( SCIPhashtableSafeInsert(permtable, (void*)(*newperms)[*nnewperms]) );
             ++(*nnewperms);
          }
 
@@ -992,6 +1009,7 @@ SCIP_RETCODE tryGenerateInvolutions(
          break;
    }
 
+   SCIPhashtableFree(&permtable);
    SCIPfreeBufferArray(scip, &tmpperm);
 
    if( *nnewperms == 0 )
