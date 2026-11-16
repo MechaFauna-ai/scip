@@ -1014,13 +1014,14 @@ SCIP_Real getBreakMove(
    return movevalue;
 }
 
-/** computes tight move value for a constraint term to the selected side */
+/** computes tight move value for a constraint term, given by its variable index and coefficient, to the selected side */
 static
-SCIP_Real getTightMove(
+SCIP_Real getTightMoveTerm(
    SCIP*                 scip,               /**< SCIP data structure */
    LS_SOLVER*            solver,             /**< solver */
    int                   constridx,          /**< constraint index */
-   int                   termidx,            /**< term index within constraint */
+   int                   varidx,             /**< index of the variable of the term */
+   SCIP_Real             coeff,              /**< coefficient of the term */
    SCIP_Bool             tolhs               /**< move to left hand side instead of right hand side? */
    )
 {
@@ -1029,13 +1030,11 @@ SCIP_Real getTightMove(
    LS_CONSTRAINT* cons;
    SCIP_Real value;
    SCIP_Real residual;
-   SCIP_Real coeff;
    SCIP_Real movevalue;
    SCIP_Real moveactivity;
    SCIP_Real stepvalue;
    SCIP_Real stepactivity;
    SCIP_Bool decrease;
-   int varidx;
 
    assert(scip != NULL);
    assert(solver != NULL);
@@ -1043,14 +1042,10 @@ SCIP_Real getTightMove(
    problem = solver->problem;
    cons = problem->conss + constridx;
 
-   assert(termidx >= 0);
-   assert(termidx < cons->ncoeffs);
    assert(!tolhs || !SCIPisInfinity(scip, -cons->lhs));
-   varidx = cons->coeffs[termidx].idx;
    assert(varidx >= 0);
    assert(varidx < problem->nvars);
    var = problem->vars + varidx;
-   coeff = cons->coeffs[termidx].coeff;
    assert(coeff != 0.0); /*lint !e777*/
 
    value = solver->incumbentassignment[varidx];
@@ -1108,6 +1103,24 @@ SCIP_Real getTightMove(
 
    /* move nearest otherwise */
    return movevalue;
+}
+
+/** computes tight move value for a constraint term, given by its position in the constraint, to the selected side */
+static
+SCIP_Real getTightMove(
+   SCIP*                 scip,               /**< SCIP data structure */
+   LS_SOLVER*            solver,             /**< solver */
+   int                   constridx,          /**< constraint index */
+   int                   termidx,            /**< term index within constraint */
+   SCIP_Bool             tolhs               /**< move to left hand side instead of right hand side? */
+   )
+{
+   LS_CONSTRAINT* cons = solver->problem->conss + constridx;
+
+   assert(termidx >= 0);
+   assert(termidx < cons->ncoeffs);
+
+   return getTightMoveTerm(scip, solver, constridx, cons->coeffs[termidx].idx, cons->coeffs[termidx].coeff, tolhs);
 }
 
 /** computes move score */
@@ -1851,7 +1864,10 @@ SCIP_RETCODE lsSolverLiftMove(
                if( tolhs && SCIPisInfinity(scip, -cons->lhs) )
                   continue;
 
-               movevalue = getTightMove(scip, solver, var->coeffs[j].idx, var->coeffs[j].pos, tolhs);
+               /* the column entry has the same coefficient as the row entry, so the row entry need not be read */
+               assert(problem->conss[var->coeffs[j].idx].coeffs[var->coeffs[j].pos].idx == varidx);
+               assert(problem->conss[var->coeffs[j].idx].coeffs[var->coeffs[j].pos].coeff == var->coeffs[j].coeff); /*lint !e777*/
+               movevalue = getTightMoveTerm(scip, solver, var->coeffs[j].idx, varidx, var->coeffs[j].coeff, tolhs);
 
                if( solver->liftbound[i] < movevalue )
                {
@@ -1889,7 +1905,10 @@ SCIP_RETCODE lsSolverLiftMove(
                if( tolhs && SCIPisInfinity(scip, -cons->lhs) )
                   continue;
 
-               movevalue = getTightMove(scip, solver, var->coeffs[j].idx, var->coeffs[j].pos, tolhs);
+               /* the column entry has the same coefficient as the row entry, so the row entry need not be read */
+               assert(problem->conss[var->coeffs[j].idx].coeffs[var->coeffs[j].pos].idx == varidx);
+               assert(problem->conss[var->coeffs[j].idx].coeffs[var->coeffs[j].pos].coeff == var->coeffs[j].coeff); /*lint !e777*/
+               movevalue = getTightMoveTerm(scip, solver, var->coeffs[j].idx, varidx, var->coeffs[j].coeff, tolhs);
 
                if( solver->liftbound[i] > movevalue )
                {
