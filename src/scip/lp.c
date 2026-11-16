@@ -6405,12 +6405,14 @@ void SCIProwRecalcLPActivity(
    )
 {
    SCIP_COL* col;
+   SCIP_Real activity;
    int c;
 
    assert(row != NULL);
    assert(stat != NULL);
 
-   row->activity = row->constant;
+   /* Accumulate locally to avoid storing the partial activity for every coefficient. */
+   activity = row->constant;
    for( c = 0; c < row->nlpcols; ++c )
    {
       col = row->cols[c];
@@ -6418,7 +6420,7 @@ void SCIProwRecalcLPActivity(
       assert(col->primsol != SCIP_INVALID);  /*lint !e777*/
       assert(col->lppos >= 0);
       assert(row->linkpos[c] >= 0);
-      row->activity += row->vals[c] * col->primsol;
+      activity += row->vals[c] * col->primsol;
    }
 
    if( row->nunlinked > 0 )
@@ -6430,7 +6432,7 @@ void SCIProwRecalcLPActivity(
          assert(col->lppos >= 0 || col->primsol == 0.0);
          assert(col->lppos == -1 || row->linkpos[c] == -1);
          if( col->lppos >= 0 )
-            row->activity += row->vals[c] * col->primsol;
+            activity += row->vals[c] * col->primsol;
       }
    }
 #ifndef NDEBUG
@@ -6447,6 +6449,7 @@ void SCIProwRecalcLPActivity(
    }
 #endif
 
+   row->activity = activity;
    row->validactivitylp = stat->lpcount;
 }
 
