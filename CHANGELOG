@@ -37,6 +37,8 @@ Features
 Performance improvements
 ------------------------
 
+- conflict bound insertion skips conversion and aggregation dispatch for loose and column variables
+
 - avoid calculating gaps at each stopping check during solving when both gap limits are zero
 - LP row activity recalculation accumulates locally instead of storing the partial sum for each coefficient
 
