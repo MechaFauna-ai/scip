@@ -19329,6 +19329,7 @@ SCIP_RATIONAL* SCIPvarGetPseudoSolExact_rec(
 }
 
 /** gets current LP or pseudo solution value of variable */
+#undef SCIPvarGetSol
 SCIP_Real SCIPvarGetSol(
    SCIP_VAR*             var,                /**< problem variable */
    SCIP_Bool             getlpval            /**< should the LP solution value be returned? */

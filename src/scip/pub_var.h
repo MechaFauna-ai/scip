@@ -1688,6 +1688,8 @@ SCIP_HOLELIST* SCIPholelistGetNext(
  * speed up the algorithms.
  */
 
+#define SCIPvarGetSol(var, getlpval) ((getlpval) ? SCIPvarGetLPSol(var) : SCIPvarGetPseudoSol(var))
+
 #define SCIPbdchgidxIsEarlierNonNull(idx1,idx2)                         \
    ((idx1)->depth < (idx2)->depth || ((idx1)->depth == (idx2)->depth && (idx1)->pos < (idx2)->pos))
 #define SCIPbdchgidxIsEarlier(idx1,idx2)                                \
