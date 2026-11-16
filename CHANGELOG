@@ -101,6 +101,9 @@ Interface changes
 
 ### Deleted and changed API methods
 
+- in optimized builds (NDEBUG), SCIPvarGetSol() is now a macro whose var argument may be evaluated up to three times;
+  library callers must pass a side-effect-free variable argument. The exported function remains available for ABI
+  compatibility
 - SCIPcreateSymgraph() receives an additional argument to specify an epsilon value that is used for epsilon-comparisons
 - SCIPincludeIISfinder() receives an additional argument to set whether it should be enabled
 - SCIPincludeIISfinderBasic() receives an additional argument to set whether it should be enabled
