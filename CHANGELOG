@@ -6,6 +6,8 @@
 Features
 --------
 
+- new separator machinesched that detects single-machine scheduling substructures, i.e., sets of jobs whose start
+  times are pairwise ordered by big-M disjunctions on binary variables, and adds release-date cuts to the cut pool
 - added functionality to compute symmetries of entire symmetry detection graph rather than just the restriction to variable nodes
 - primal heuristic feasjump
 - primal heuristic localsearch
@@ -102,6 +104,7 @@ Interface changes
 - added SCIPiisfinderSetEnable() to set whether an iis finder is enabled
 - added SCIPincludeHeurFeasjump() to include feasibility jump primal heuristic
 - added SCIPincludeHeurLocalsearch() to include local search primal heuristic
+- added SCIPincludeSepaMachinesched() to include the machinesched separator
 - added SCIPtightenVariableLowerAndUpperBounds() to tighten the variable bounds attached to a list of variables
 - added SCIPcreateBendersDefaultFromFiles() to add subproblems to the default Benders' decomposition plugin through
   instance files, instead of SCIP instances.
@@ -125,6 +128,10 @@ Interface changes
 
 ### New parameters
 
+- `separating/machinesched/maxmachines`: maximal number of machines (sets of pairwise ordered jobs) to detect
+- `separating/machinesched/minjobs`: minimal number of jobs on a machine
+- `separating/machinesched/releasecuts`: should cuts be generated for all release-date thresholds (otherwise only for the smallest release date)?
+- `separating/machinesched/orderequalities`: should binary variables that determine the order of the same pair of jobs be identified via cliques?
 - `branching/relpscost/sbiterquotrestart`: factor for the strong branching LP iteration budget as long as at most `sbiterrestarts` restarts have been performed
 - `branching/relpscost/sbiterrestarts`: maximal number of performed restarts for which the strong branching LP iteration budget is scaled by `sbiterquotrestart` (-1: no scaling)
 - `branching/relpscost/maxinititer`: maximal iteration limit for strong branching initializations of pseudo cost entries if it is computed automatically (`inititer` = 0)
