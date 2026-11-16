@@ -59,6 +59,8 @@ Performance improvements
   constraints with implications and cliques (SCIPshrinkDisjunctiveVarSetCache()); the cache is flushed when cliques,
   global bounds, or problem variables change, so the reductions are unchanged; e.g., ex10 is presolved in 125 instead
   of 222 seconds
+- when removing redundant nonzeros of logicor constraints, the positions of the constraint variables and their
+  negations in the column representation are looked up once per constraint instead of once per checked variable
 
 Interface changes
 -----------------
