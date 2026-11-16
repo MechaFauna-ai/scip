@@ -8263,7 +8263,15 @@ SCIP_RETCODE SCIPcalcMIR(
 
 /** compute the efficacy of the MIR cut for the given values without computing the cut.
  *  This is used for the CMIR cut generation heuristic.
+ *
+ *  The function is compiled for the baseline instruction set and, with GCC on x86-64, additionally for SSE4.1, which
+ *  provides an exact floor instruction; the version is selected at load time. Both compute the same values.
  */
+#if defined(__GNUC__) && !defined(__clang__) && defined(__x86_64__) && defined(__linux__) && defined(__has_attribute)
+#if __has_attribute(target_clones)
+__attribute__((target_clones("default", "sse4.1")))
+#endif
+#endif
 static
 SCIP_Real computeMIREfficacy(
    SCIP*                 scip,               /**< SCIP datastructure */
