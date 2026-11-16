@@ -37,6 +37,7 @@ Features
 Performance improvements
 ------------------------
 
+- clique coloring handles covered, overlapping, or consecutive single color intervals without merging interval lists
 - avoid calculating gaps at each stopping check during solving when both gap limits are zero
 - LP row activity recalculation accumulates locally instead of storing the partial sum for each coefficient
 

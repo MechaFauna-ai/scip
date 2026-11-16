@@ -150,6 +150,26 @@ void updateNeighbor(
    LIST_ITV* pciv;
    LIST_ITV* nciv;
 
+   /* Handle unions of single intervals without allocating and merging interval lists. */
+   pciv = pgsd->lcitv;
+   if( pnc != NULL && pnc->next == NULL && pciv != NULL )
+   {
+      /* The new interval is already covered by the first neighbor interval. */
+      if( pnc->itv.inf >= pciv->itv.inf && pnc->itv.sup <= pciv->itv.sup )
+         return;
+
+      /* Two overlapping or consecutive intervals form one interval. Use inf - 1 to avoid overflowing sup + 1. */
+      if( pciv->next == NULL && pnc->itv.inf - 1 <= pciv->itv.sup && pciv->itv.inf - 1 <= pnc->itv.sup )
+      {
+         if( pnc->itv.inf < pciv->itv.inf )
+            pciv->itv.inf = pnc->itv.inf;
+         if( pnc->itv.sup > pciv->itv.sup )
+            pciv->itv.sup = pnc->itv.sup;
+         pgsd->satdeg = pciv->itv.sup - pciv->itv.inf + 1;
+         return;
+      }
+   }
+
    /* save the pointer to the first element of the list */
    head.next = pgsd->lcitv;
    apciv = &head;
