@@ -134,6 +134,8 @@ struct OrbitalReductionComponentData
    SCIP_Real*            globalvarubs;       /**< global variable upper bounds until before branching starts */
    int**                 perms;              /**< the permutations for orbital reduction */
    int                   nperms;             /**< the number of permutations in perms */
+   int*                  permsupport;        /**< indices moved by the permutations, in increasing order per permutation */
+   int*                  permsupportbeg;     /**< start of the indices moved by permutation p in permsupport (nperms + 1) */
    SCIP_VAR**            permvars;           /**< array consisting of the variables of this component */
    int                   npermvars;          /**< number of vars in this component */
    SCIP_HASHMAP*         permvarmap;         /**< map of variables to indices in permvars array */
@@ -343,6 +345,7 @@ SCIP_RETCODE orbitalReductionGetSymmetryStabilizerSubgroup(
    SCIP*                 scip,               /**< pointer to SCIP data structure */
    ORCDATA*              orcdata,            /**< pointer to data for orbital reduction data */
    int**                 chosenperms,        /**< pointer to permutations that are chosen */
+   int*                  chosenpermids,      /**< pointer to store the indices of the chosen permutations in orcdata->perms */
    int*                  nchosenperms,       /**< pointer to store the number of chosen permutations */
    SCIP_Real*            varlbs,             /**< array of orcdata->permvars variable LBs. If NULL, use local bounds */
    SCIP_Real*            varubs,             /**< array of orcdata->permvars variable UBs. If NULL, use local bounds */
@@ -361,6 +364,7 @@ SCIP_RETCODE orbitalReductionGetSymmetryStabilizerSubgroup(
    assert( scip != NULL );
    assert( orcdata != NULL );
    assert( chosenperms != NULL );
+   assert( chosenpermids != NULL );
    assert( nchosenperms != NULL );
    assert( (varlbs == NULL) == (varubs == NULL) );
    assert( branchedvarindices != NULL );
@@ -435,6 +439,7 @@ SCIP_RETCODE orbitalReductionGetSymmetryStabilizerSubgroup(
          continue;
 
       /* permutation qualifies for the stabilizer. Add permutation */
+      chosenpermids[*nchosenperms] = p;
       chosenperms[(*nchosenperms)++] = perm;
    }
 
@@ -666,9 +671,11 @@ SCIP_RETCODE applyOrbitalBranchingPropagations(
    SCIP_SHADOWBOUNDUPDATE* branchingdecision;
    int branchingdecisionvarid;
    int** chosenperms;
+   int* chosenpermids;
    int* perm;
    int nchosenperms;
    int p;
+   int k;
    int* varorbitids;
    int* varorbitidssort;
    int idx;
@@ -811,6 +818,7 @@ SCIP_RETCODE applyOrbitalBranchingPropagations(
     * variable is applied, and possibly repeated for other branching variables.
     */
    SCIP_CALL( SCIPallocBufferArray(scip, &chosenperms, orcdata->nperms) );
+   SCIP_CALL( SCIPallocBufferArray(scip, &chosenpermids, orcdata->nperms) );
    for (branchstep = 0; branchstep < shadowfocusnode->nbranchingdecisions; ++branchstep)
    {
       branchingdecision = &(shadowfocusnode->branchingdecisions[branchstep]);
@@ -831,21 +839,22 @@ SCIP_RETCODE applyOrbitalBranchingPropagations(
        *
        * Note: All information about branching decisions is kept in varlbs, varubs, and the branchedvarindices.
        */
-      SCIP_CALL( orbitalReductionGetSymmetryStabilizerSubgroup(scip, orcdata, chosenperms, &nchosenperms,
-         varlbs, varubs, branchedvarindices, inbranchedvarindices, nbranchedvarindices) );
+      SCIP_CALL( orbitalReductionGetSymmetryStabilizerSubgroup(scip, orcdata, chosenperms, chosenpermids,
+            &nchosenperms, varlbs, varubs, branchedvarindices, inbranchedvarindices, nbranchedvarindices) );
 
       /* compute orbit containing branching var */
       SCIP_CALL( SCIPcreateDisjointset(scip, &orbitset, orcdata->npermvars) );
 
-      /* put elements mapping to each other in same orbit */
-      /* @todo a potential performance hazard; quadratic time */
+      /* put elements mapping to each other in same orbit; only the indices moved by a permutation are visited */
       for (p = 0; p < nchosenperms; ++p)
       {
          perm = chosenperms[p];
-         for (i = 0; i < orcdata->npermvars; ++i)
+         assert( perm == orcdata->perms[chosenpermids[p]] );
+         for (k = orcdata->permsupportbeg[chosenpermids[p]]; k < orcdata->permsupportbeg[chosenpermids[p] + 1]; ++k)
          {
-            if ( i != perm[i] )
-               SCIPdisjointsetUnion(orbitset, i, perm[i], FALSE);
+            i = orcdata->permsupport[k];
+            assert( i != perm[i] );
+            SCIPdisjointsetUnion(orbitset, i, perm[i], FALSE);
          }
       }
 
@@ -987,6 +996,7 @@ SCIP_RETCODE applyOrbitalBranchingPropagations(
          inbranchedvarindices[branchingdecisionvarid] = TRUE;
       }
    }
+   SCIPfreeBufferArray(scip, &chosenpermids);
    SCIPfreeBufferArray(scip, &chosenperms);
 
    /* clean inbranchedvarindices array */
@@ -1035,9 +1045,11 @@ SCIP_RETCODE applyOrbitalReductionPropagations(
    int nbranchedvarindices;
    int varid;
    int** chosenperms;
+   int* chosenpermids;
    int* perm;
    int nchosenperms;
    int p;
+   int k;
    SCIP_DISJOINTSET* orbitset;
    int* varorbitids;
    int* varorbitidssort;
@@ -1092,7 +1104,8 @@ SCIP_RETCODE applyOrbitalReductionPropagations(
    /* 1. compute the orbit of the branching variable of the stabilized symmetry subgroup at this point. */
    /* 1.1. identify the permutations of the symmetry group that are permitted */
    SCIP_CALL( SCIPallocBufferArray(scip, &chosenperms, orcdata->nperms) );
-   SCIP_CALL( orbitalReductionGetSymmetryStabilizerSubgroup(scip, orcdata, chosenperms, &nchosenperms,
+   SCIP_CALL( SCIPallocBufferArray(scip, &chosenpermids, orcdata->nperms) );
+   SCIP_CALL( orbitalReductionGetSymmetryStabilizerSubgroup(scip, orcdata, chosenperms, chosenpermids, &nchosenperms,
       NULL, NULL, branchedvarindices, inbranchedvarindices, nbranchedvarindices) );
    assert( nchosenperms >= 0 );
 
@@ -1103,16 +1116,18 @@ SCIP_RETCODE applyOrbitalReductionPropagations(
    /* 1.2. compute orbits of this subgroup */
    SCIP_CALL( SCIPcreateDisjointset(scip, &orbitset, orcdata->npermvars) );
 
-   /* put elements mapping to each other in same orbit */
-   /* @todo this is O(nchosenperms * npermvars), which is a potential performance bottleneck.
-      Alternative: precompute support per permutation at initialization, and iterate over these.*/
+   /* put elements mapping to each other in same orbit; only the indices moved by a permutation are visited, which
+    * yields the same sequence of unions as a scan over all indices
+    */
    for (p = 0; p < nchosenperms; ++p)
    {
       perm = chosenperms[p];
-      for (i = 0; i < orcdata->npermvars; ++i)
+      assert( perm == orcdata->perms[chosenpermids[p]] );
+      for (k = orcdata->permsupportbeg[chosenpermids[p]]; k < orcdata->permsupportbeg[chosenpermids[p] + 1]; ++k)
       {
-         if ( i != perm[i] )
-            SCIPdisjointsetUnion(orbitset, i, perm[i], FALSE);
+         i = orcdata->permsupport[k];
+         assert( i != perm[i] );
+         SCIPdisjointsetUnion(orbitset, i, perm[i], FALSE);
       }
    }
 
@@ -1130,6 +1145,7 @@ SCIP_RETCODE applyOrbitalReductionPropagations(
    SCIPfreeBufferArray(scip, &varorbitids);
    SCIPfreeDisjointset(scip, &orbitset);
 FREE:
+   SCIPfreeBufferArray(scip, &chosenpermids);
    SCIPfreeBufferArray(scip, &chosenperms);
 
    /* clean inbranchedvarindices array */
@@ -1350,6 +1366,33 @@ SCIP_RETCODE addComponent(
    }
    SCIPfreeBufferArray(scip, &compidx);
 
+   /* store the indices moved by each permutation, so that orbits can be computed without scanning all indices */
+   SCIP_CALL( SCIPallocBlockMemoryArray(scip, &orcdata->permsupportbeg, nperms + 1) );
+   orcdata->permsupportbeg[0] = 0;
+   for (p = 0; p < nperms; ++p)
+   {
+      newperm = orcdata->perms[p];
+      j = orcdata->permsupportbeg[p];
+      for (i = 0; i < orcdata->npermvars; ++i)
+      {
+         if ( newperm[i] != i )
+            ++j;
+      }
+      orcdata->permsupportbeg[p + 1] = j;
+   }
+   SCIP_CALL( SCIPallocBlockMemoryArray(scip, &orcdata->permsupport, MAX(orcdata->permsupportbeg[nperms], 1)) );
+   for (p = 0; p < nperms; ++p)
+   {
+      newperm = orcdata->perms[p];
+      j = orcdata->permsupportbeg[p];
+      for (i = 0; i < orcdata->npermvars; ++i)
+      {
+         if ( newperm[i] != i )
+            orcdata->permsupport[j++] = i;
+      }
+      assert( j == orcdata->permsupportbeg[p + 1] );
+   }
+
    /* global variable bounds */
    SCIP_CALL( SCIPallocBlockMemoryArray(scip, &orcdata->globalvarlbs, orcdata->npermvars) );
    SCIP_CALL( SCIPallocBlockMemoryArray(scip, &orcdata->globalvarubs, orcdata->npermvars) );
@@ -1456,6 +1499,9 @@ SCIP_RETCODE freeComponent(
 
    SCIPfreeBlockMemoryArray(scip, &(*orcdata)->globalvarubs, (*orcdata)->npermvars);
    SCIPfreeBlockMemoryArray(scip, &(*orcdata)->globalvarlbs, (*orcdata)->npermvars);
+
+   SCIPfreeBlockMemoryArray(scip, &(*orcdata)->permsupport, MAX((*orcdata)->permsupportbeg[(*orcdata)->nperms], 1));
+   SCIPfreeBlockMemoryArray(scip, &(*orcdata)->permsupportbeg, (*orcdata)->nperms + 1);
 
    for (p = (*orcdata)->nperms -1; p >= 0; --p)
    {
