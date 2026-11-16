@@ -37,6 +37,9 @@ Features
 Performance improvements
 ------------------------
 
+- the implied bounds separator aggregates implied bounds on a variable over cliques of binary variables: if at most one
+  of the literals l_i can be one and l_i = 1 implies y <= p_i, it separates y + sum_i (ub(y) - p_i) l_i <= ub(y), which
+  dominates the single implied bound cuts (analogously for lower bounds)
 - logic or constraints are shortened by implications and cliques again only when those of one of their variables
   changed since the last attempt (a hash per variable), instead of in every presolving round that added any
 - in opportunistic concurrent solving, signal early termination as soon as one solver reaches a terminal status, so the others stop at their next per-node check rather than running until their next sync point
@@ -134,6 +137,8 @@ Interface changes
 - `separating/machinesched/minjobs`: minimal number of jobs on a machine
 - `separating/machinesched/releasecuts`: should cuts be generated for all release-date thresholds (otherwise only for the smallest release date)?
 - `separating/machinesched/orderequalities`: should binary variables that determine the order of the same pair of jobs be identified via cliques?
+- `separating/impliedbounds/usecliqueaggr`: should implied bounds of variables be aggregated over cliques of binary variables?
+- `separating/impliedbounds/maxcliquesize`: maximal size of a clique used for aggregating implied bounds
 - `branching/relpscost/sbiterquotrestart`: factor for the strong branching LP iteration budget as long as at most `sbiterrestarts` restarts have been performed
 - `branching/relpscost/sbiterrestarts`: maximal number of performed restarts for which the strong branching LP iteration budget is scaled by `sbiterquotrestart` (-1: no scaling)
 - `branching/relpscost/maxinititer`: maximal iteration limit for strong branching initializations of pseudo cost entries if it is computed automatically (`inititer` = 0)

@@ -63,11 +63,15 @@
 
 #define RELCUTCOEFMAXRANGE          1.0 /**< maximal allowed range of cut coefficients, relative to 1/feastol */
 #define DEFAULT_USETWOSIZECLIQUES  TRUE /**< should violated inequalities for cliques with 2 variables be separated? */
+#define DEFAULT_USECLIQUEAGGR      TRUE /**< should implied bounds be aggregated over cliques of binary variables? */
+#define DEFAULT_MAXCLIQUESIZE      1000 /**< maximal size of a clique used for aggregating implied bounds */
 
 /** separator-specific data for the implied bounds separator */
 struct SCIP_SepaData
 {
    SCIP_Bool             usetwosizecliques;  /**< should violated inequalities for cliques with 2 variables be separated? */
+   SCIP_Bool             usecliqueaggr;      /**< should implied bounds be aggregated over cliques of binary variables? */
+   int                   maxcliquesize;      /**< maximal size of a clique used for aggregating implied bounds */
 };
 
 /*
@@ -132,6 +136,212 @@ SCIP_RETCODE addCut(
    return SCIP_OKAY;
 }
 
+/** returns the bound of an implication (v == fixing) -> y <= b (y >= b), or SCIP_INVALID if no such implication exists */
+static
+SCIP_Real getImplBound(
+   SCIP_VAR*             var,                /**< binary variable v */
+   SCIP_Bool             fixing,             /**< fixing value of v */
+   SCIP_VAR*             implvar,            /**< implied variable y */
+   SCIP_BOUNDTYPE        impltype            /**< type of implied bound */
+   )
+{
+   SCIP_VAR** implvars;
+   SCIP_BOUNDTYPE* impltypes;
+   int nimpls;
+   int pos;
+   int k;
+
+   nimpls = SCIPvarGetNImpls(var, fixing);
+   if( nimpls == 0 )
+      return SCIP_INVALID;
+
+   implvars = SCIPvarGetImplVars(var, fixing);
+
+   /* implications are sorted by the implied variable, a variable may have a lower and an upper bound implication */
+   if( !SCIPsortedvecFindPtr((void**)implvars, SCIPvarComp, (void*)implvar, nimpls, &pos) )
+      return SCIP_INVALID;
+
+   impltypes = SCIPvarGetImplTypes(var, fixing);
+   for( k = MAX(pos - 1, 0); k <= MIN(pos + 1, nimpls - 1); ++k )
+   {
+      if( implvars[k] == implvar && impltypes[k] == impltype )
+         return SCIPvarGetImplBounds(var, fixing)[k];
+   }
+
+   return SCIP_INVALID;
+}
+
+/** returns the key of an implication (x == fixing) -> y (<= or >=) for the set of covered implications */
+static
+void* coveredKey(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_VAR*             var,                /**< binary variable x */
+   SCIP_Bool             fixing,             /**< value of x */
+   SCIP_VAR*             implvar,            /**< implied variable y */
+   SCIP_BOUNDTYPE        impltype            /**< type of implication */
+   )
+{
+   size_t nvars = (size_t)SCIPgetNVars(scip);
+
+   return (void*)((((size_t)SCIPvarGetProbindex(var) * 2 + (fixing ? 1 : 0)) * nvars
+         + (size_t)SCIPvarGetProbindex(implvar)) * 2 + (impltype == SCIP_BOUNDTYPE_UPPER ? 1 : 0) + 1); /*lint !e571*/
+}
+
+/** aggregates the implications on a variable y over the cliques containing a given literal
+ *
+ *  If the literals l_1, ..., l_k form a clique, i.e., at most one of them can be one, and l_i == 1 implies y <= p_i
+ *  with p_i < ub (global upper bound of y), then
+ *
+ *      y + sum_i (ub - p_i) l_i <= ub
+ *
+ *  is valid and dominates each of the single implied bound cuts y + (ub - p_i) l_i <= ub. The case y >= p_i is
+ *  analogous. A literal is either a binary variable x or its negation 1 - x.
+ */
+static
+SCIP_RETCODE separateCliqueAggregation(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_SEPA*            sepa,               /**< separator */
+   SCIP_SEPADATA*        sepadata,           /**< separator data */
+   SCIP_SOL*             sol,                /**< the solution that should be separated, or NULL for LP solution */
+   SCIP_Real*            solvals,            /**< array with solution values of all problem variables */
+   SCIP_HASHSET*         doneset,            /**< set of already processed (clique, variable, boundtype) triples */
+   SCIP_HASHSET*         covered,            /**< set of implications covered by added aggregated cuts */
+   SCIP_VAR*             var,                /**< binary variable x */
+   SCIP_Bool             fixing,             /**< value of x of the implication */
+   SCIP_VAR*             implvar,            /**< implied variable y */
+   SCIP_BOUNDTYPE        impltype,           /**< type of implication */
+   SCIP_VAR**            cutvars,            /**< buffer for cut variables, at least maxcliquesize + 1 entries */
+   SCIP_Real*            cutvals,            /**< buffer for cut coefficients, at least maxcliquesize + 1 entries */
+   SCIP_Bool*            cutoff,             /**< whether a cutoff has been detected */
+   int*                  ncuts               /**< pointer to update number of cuts added */
+   )
+{
+   SCIP_CLIQUE** cliques;
+   SCIP_Real bound;
+   SCIP_Real sign;
+   SCIP_Real ysolval;
+   int ncliques;
+   int nvars;
+   int c;
+
+   ncliques = SCIPvarGetNCliques(var, fixing);
+   if( ncliques == 0 )
+      return SCIP_OKAY;
+
+   bound = impltype == SCIP_BOUNDTYPE_UPPER ? SCIPvarGetUbGlobal(implvar) : SCIPvarGetLbGlobal(implvar);
+   if( SCIPisInfinity(scip, REALABS(bound)) )
+      return SCIP_OKAY;
+
+   /* write cut as sign * y + sum_i d_i l_i <= sign * bound */
+   sign = impltype == SCIP_BOUNDTYPE_UPPER ? 1.0 : -1.0;
+   ysolval = solvals[SCIPvarGetProbindex(implvar)];
+   nvars = SCIPgetNVars(scip);
+   cliques = SCIPvarGetCliques(var, fixing);
+
+   for( c = 0; c < ncliques && !(*cutoff); ++c )
+   {
+      SCIP_VAR** clqvars;
+      SCIP_Bool* clqvals;
+      SCIP_Real activity;
+      SCIP_Real rhs;
+      size_t key;
+      int nclqvars;
+      int nterms;
+      int i;
+
+      nclqvars = SCIPcliqueGetNVars(cliques[c]);
+      if( nclqvars <= 2 || nclqvars > sepadata->maxcliquesize )
+         continue;
+
+      /* skip clique if it was already used for this implied variable and bound type */
+      key = ((size_t)SCIPcliqueGetId(cliques[c]) * (size_t)nvars + (size_t)SCIPvarGetProbindex(implvar)) * 2
+         + (impltype == SCIP_BOUNDTYPE_UPPER ? 1 : 0) + 1;
+      if( SCIPhashsetExists(doneset, (void*)key) )
+         continue;
+      SCIP_CALL( SCIPhashsetInsert(doneset, SCIPblkmem(scip), (void*)key) );
+
+      clqvars = SCIPcliqueGetVars(cliques[c]);
+      clqvals = SCIPcliqueGetValues(cliques[c]);
+
+      cutvars[0] = implvar;
+      cutvals[0] = sign;
+      activity = sign * ysolval;
+      rhs = sign * bound;
+      nterms = 0;
+
+      for( i = 0; i < nclqvars; ++i )
+      {
+         SCIP_Real implbound;
+         SCIP_Real coef;
+         SCIP_Real val;
+
+         if( SCIPvarGetProbindex(clqvars[i]) < 0 )
+            continue;
+
+         implbound = getImplBound(clqvars[i], clqvals[i], implvar, impltype);
+         if( implbound == SCIP_INVALID ) /*lint !e777*/
+            continue;
+
+         coef = sign * (bound - implbound);
+         if( !SCIPisFeasPositive(scip, coef) || coef * SCIPfeastol(scip) > RELCUTCOEFMAXRANGE )
+            continue;
+
+         val = solvals[SCIPvarGetProbindex(clqvars[i])];
+
+         /* literal x contributes coef * x, literal 1 - x contributes coef - coef * x */
+         if( clqvals[i] )
+         {
+            cutvars[nterms + 1] = clqvars[i];
+            cutvals[nterms + 1] = coef;
+            activity += coef * val;
+         }
+         else
+         {
+            cutvars[nterms + 1] = clqvars[i];
+            cutvals[nterms + 1] = -coef;
+            activity -= coef * val;
+            rhs -= coef;
+         }
+         ++nterms;
+      }
+
+      /* with only one implication, the cut is a usual implied bound cut */
+      if( nterms <= 1 || !SCIPisEfficacious(scip, activity - rhs) )
+         continue;
+
+      {
+         SCIP_ROW* cut;
+         char cutname[SCIP_MAXSTRLEN];
+
+         (void) SCIPsnprintf(cutname, SCIP_MAXSTRLEN, "implbdclq%" SCIP_LONGINT_FORMAT "_%d", SCIPgetNLPs(scip), *ncuts);
+         SCIP_CALL( SCIPcreateEmptyRowSepa(scip, &cut, sepa, cutname, -SCIPinfinity(scip), rhs, FALSE, FALSE, TRUE) );
+         SCIP_CALL( SCIPaddVarsToRow(scip, cut, nterms + 1, cutvars, cutvals) );
+         SCIProwChgRank(cut, 1);
+
+         if( SCIPisCutEfficacious(scip, sol, cut) )
+         {
+#ifdef SCIP_DEBUG
+            SCIPdebugMsg(scip, " -> found clique implied bound cut (activity = %g): ", activity);
+            SCIP_CALL( SCIPprintRow(scip, cut, NULL) );
+#endif
+            SCIP_CALL( SCIPaddPoolCut(scip, cut) );
+            (*ncuts)++;
+
+            /* the implications of the clique members on y are dominated by this cut */
+            for( i = 1; i <= nterms; ++i )
+            {
+               SCIP_CALL( SCIPhashsetInsert(covered, SCIPblkmem(scip),
+                     coveredKey(scip, cutvars[i], cutvals[i] > 0.0, implvar, impltype)) );
+            }
+         }
+
+         SCIP_CALL( SCIPreleaseRow(scip, &cut) );
+      }
+   }
+
+   return SCIP_OKAY;
+}
+
 /** searches and adds implied bound cuts that are violated by the given solution value array */
 static
 SCIP_RETCODE separateCuts(
@@ -148,6 +358,7 @@ SCIP_RETCODE separateCuts(
 {
    SCIP_CLIQUE** cliques;
    SCIP_SEPADATA* sepadata;
+   SCIP_HASHSET* covered;
    int ncliques;
    int i;
 
@@ -163,6 +374,72 @@ SCIP_RETCODE separateCuts(
    assert(sepadata != NULL);
 
    SCIPdebugMsg(scip, "searching for implied bound cuts\n");
+
+   /* aggregate implied bounds over cliques first; the single implied bound cuts that are dominated by an added
+    * aggregated cut are skipped below
+    */
+   covered = NULL;
+   if( sepadata->usecliqueaggr && nfracs > 0 )
+   {
+      SCIP_HASHSET* doneset;
+      SCIP_VAR** cutvars;
+      SCIP_Real* cutvals;
+
+      /* prepare clean clique data */
+      SCIP_CALL( SCIPcleanupCliques(scip, cutoff) );
+
+      if( *cutoff )
+         return SCIP_OKAY;
+
+      SCIP_CALL( SCIPhashsetCreate(&doneset, SCIPblkmem(scip), 64) );
+      SCIP_CALL( SCIPhashsetCreate(&covered, SCIPblkmem(scip), 64) );
+      SCIP_CALL( SCIPallocBufferArray(scip, &cutvars, sepadata->maxcliquesize + 1) );
+      SCIP_CALL( SCIPallocBufferArray(scip, &cutvals, sepadata->maxcliquesize + 1) );
+
+      for( i = 0; i < nfracs && !(*cutoff); i++ )
+      {
+         int fixing;
+
+         assert(fracvars != NULL);
+
+         if( SCIPvarGetType(fracvars[i]) != SCIP_VARTYPE_BINARY || SCIPvarIsImpliedIntegral(fracvars[i]) )
+            continue;
+
+         for( fixing = 0; fixing <= 1 && !(*cutoff); ++fixing )
+         {
+            SCIP_BOUNDTYPE* impltypes;
+            SCIP_VAR** implvars;
+            int nimpl;
+            int j;
+
+            if( SCIPvarGetNCliques(fracvars[i], (SCIP_Bool)fixing) == 0 )
+               continue;
+
+            nimpl = SCIPvarGetNImpls(fracvars[i], (SCIP_Bool)fixing);
+            implvars = SCIPvarGetImplVars(fracvars[i], (SCIP_Bool)fixing);
+            impltypes = SCIPvarGetImplTypes(fracvars[i], (SCIP_Bool)fixing);
+
+            for( j = 0; j < nimpl && !(*cutoff); j++ )
+            {
+               if( SCIPvarGetProbindex(implvars[j]) < 0 )
+                  continue;
+
+               SCIP_CALL( separateCliqueAggregation(scip, sepa, sepadata, sol, solvals, doneset, covered, fracvars[i],
+                     (SCIP_Bool)fixing, implvars[j], impltypes[j], cutvars, cutvals, cutoff, ncuts) );
+            }
+         }
+      }
+
+      SCIPfreeBufferArray(scip, &cutvals);
+      SCIPfreeBufferArray(scip, &cutvars);
+      SCIPhashsetFree(&doneset, SCIPblkmem(scip));
+
+      if( *cutoff )
+      {
+         SCIPhashsetFree(&covered, SCIPblkmem(scip));
+         return SCIP_OKAY;
+      }
+   }
 
    /* search binary variables for violated implications */
    for( i = 0; i < nfracs; i++ )
@@ -205,6 +482,10 @@ SCIP_RETCODE separateCuts(
          if( SCIPvarGetProbindex(implvars[j]) < 0 )
             continue;
 
+         /* skip implications covered by an aggregated cut */
+         if( covered != NULL && SCIPhashsetExists(covered, coveredKey(scip, fracvars[i], TRUE, implvars[j], impltypes[j])) )
+            continue;
+
          solval = solvals[SCIPvarGetProbindex(implvars[j])];
          if( impltypes[j] == SCIP_BOUNDTYPE_UPPER )
          {
@@ -220,7 +501,7 @@ SCIP_RETCODE separateCuts(
                SCIP_CALL( addCut(scip, sepa, 1.0, implvars[j], solval, (ub - implbounds[j]), fracvars[i], fracvals[i],
                      ub, cutoff, ncuts) );
                if ( *cutoff )
-                  return SCIP_OKAY;
+                  goto TERMINATE;
             }
          }
          else
@@ -238,7 +519,7 @@ SCIP_RETCODE separateCuts(
                SCIP_CALL( addCut(scip, sepa, -1.0, implvars[j], solval, (implbounds[j] - lb), fracvars[i], fracvals[i],
                      -lb, cutoff, ncuts) );
                if ( *cutoff )
-                  return SCIP_OKAY;
+                  goto TERMINATE;
             }
          }
       }
@@ -264,6 +545,10 @@ SCIP_RETCODE separateCuts(
          if( SCIPvarGetProbindex(implvars[j]) < 0 )
             continue;
 
+         /* skip implications covered by an aggregated cut */
+         if( covered != NULL && SCIPhashsetExists(covered, coveredKey(scip, fracvars[i], FALSE, implvars[j], impltypes[j])) )
+            continue;
+
          solval = solvals[SCIPvarGetProbindex(implvars[j])];
          if( impltypes[j] == SCIP_BOUNDTYPE_UPPER )
          {
@@ -279,7 +564,7 @@ SCIP_RETCODE separateCuts(
                SCIP_CALL( addCut(scip, sepa, 1.0, implvars[j], solval, (implbounds[j] - ub), fracvars[i], fracvals[i],
                      implbounds[j], cutoff, ncuts) );
                if ( *cutoff )
-                  return SCIP_OKAY;
+                  goto TERMINATE;
             }
          }
          else
@@ -297,11 +582,18 @@ SCIP_RETCODE separateCuts(
                SCIP_CALL( addCut(scip, sepa, -1.0, implvars[j], solval, (lb - implbounds[j]), fracvars[i], fracvals[i],
                      -implbounds[j], cutoff, ncuts) );
                if ( *cutoff )
-                  return SCIP_OKAY;
+                  goto TERMINATE;
             }
          }
       }
    }
+
+TERMINATE:
+   if( covered != NULL )
+      SCIPhashsetFree(&covered, SCIPblkmem(scip));
+
+   if( *cutoff )
+      return SCIP_OKAY;
 
    /* stop separation here if cliques should not be separated */
    if( ! sepadata->usetwosizecliques )
@@ -561,6 +853,14 @@ SCIP_RETCODE SCIPincludeSepaImpliedbounds(
    SCIP_CALL( SCIPaddBoolParam(scip, "separating/impliedbounds/usetwosizecliques",
          "should violated inequalities for cliques with 2 variables be separated?",
          &sepadata->usetwosizecliques, TRUE, DEFAULT_USETWOSIZECLIQUES, NULL, NULL) );
+
+   SCIP_CALL( SCIPaddBoolParam(scip, "separating/impliedbounds/usecliqueaggr",
+         "should implied bounds of variables be aggregated over cliques of binary variables?",
+         &sepadata->usecliqueaggr, TRUE, DEFAULT_USECLIQUEAGGR, NULL, NULL) );
+
+   SCIP_CALL( SCIPaddIntParam(scip, "separating/impliedbounds/maxcliquesize",
+         "maximal size of a clique used for aggregating implied bounds",
+         &sepadata->maxcliquesize, TRUE, DEFAULT_MAXCLIQUESIZE, 3, INT_MAX, NULL, NULL) );
 
    return SCIP_OKAY;
 }
