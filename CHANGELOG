@@ -65,6 +65,8 @@ Performance improvements
   reduction and Schreier-Sims constraints instead of comparing each candidate with all known permutations, and orbital
   reduction maps permutation indices with an array instead of a hash map when adding a component; same symmetry
   handling, e.g., fiball is presolved in 2.2 instead of 3.7 seconds
+- without a dense clique table, the clique separator marks the nodes of the cliques of a node, instead of the cliques,
+  when selecting adjacent nodes in the maximum weight clique search if this is cheaper; same cliques are found
 
 Interface changes
 -----------------
