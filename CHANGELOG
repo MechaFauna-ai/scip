@@ -61,6 +61,10 @@ Performance improvements
   of 222 seconds
 - when removing redundant nonzeros of logicor constraints, the positions of the constraint variables and their
   negations in the column representation are looked up once per constraint instead of once per checked variable
+- symmetry handling stores the known permutations in a hash table when generating new involutions for lexicographic
+  reduction and Schreier-Sims constraints instead of comparing each candidate with all known permutations, and orbital
+  reduction maps permutation indices with an array instead of a hash map when adding a component; same symmetry
+  handling, e.g., fiball is presolved in 2.2 instead of 3.7 seconds
 
 Interface changes
 -----------------
@@ -82,6 +86,7 @@ Interface changes
 
 ### New API functions
 
+- added SCIPcreatePermHashtable() to create a hash table of permutations
 - added SCIPcreateShrinkCache(), SCIPfreeShrinkCache(), and SCIPshrinkDisjunctiveVarSetCache() to call
   SCIPshrinkDisjunctiveVarSet() repeatedly with a cache for the clique neighborhoods of the variables
 - added SYMcomputeSymmetryGeneratorsNode() to compute generators of the automorphism group of an entire (node set) of a symmetry detection graph

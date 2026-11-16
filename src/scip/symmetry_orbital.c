@@ -1240,6 +1240,7 @@ SCIP_RETCODE addComponent(
    )
 {
    ORCDATA* orcdata;
+   int* compidx;
    int i;
    int j;
    int p;
@@ -1261,24 +1262,27 @@ SCIP_RETCODE addComponent(
 
    /* correct indices by removing fixed points */
 
+   /* mark the indices that are moved by any of the permutations in the component (row-wise for cache efficiency) */
+   SCIP_CALL( SCIPallocClearBufferArray(scip, &compidx, npermvars) );
+   for (p = 0; p < nperms; ++p)
+   {
+      origperm = perms[p];
+      for (i = 0; i < npermvars; ++i)
+      {
+         if ( origperm[i] != i )
+            compidx[i] = 1;
+      }
+   }
+
    /* determine the number of vars that are moved by the component, assign to orcdata->npermvars */
    orcdata->npermvars = 0;
    for (i = 0; i < npermvars; ++i)
-   {
-      /* is index i moved by any of the permutations in the component? */
-      for (p = 0; p < nperms; ++p)
-      {
-         if ( perms[p][i] != i )
-         {
-            ++orcdata->npermvars;
-            break;
-         }
-      }
-   }
+      orcdata->npermvars += compidx[i];
 
    /* do not support the setting where the component is empty */
    if ( orcdata->npermvars <= 0 )
    {
+      SCIPfreeBufferArray(scip, &compidx);
       SCIPfreeBlockMemory(scip, &orcdata);
       *success = FALSE;
       return SCIP_OKAY;
@@ -1298,19 +1302,20 @@ SCIP_RETCODE addComponent(
       assert( SCIPhashmapGetImageInt(orcdata->permvarmap, (void*) permvars[i]) == INT_MAX );
 
       /* is index i moved by any of the permutations in the component? */
-      for (p = 0; p < nperms; ++p)
+      if ( compidx[i] != 0 )
       {
-         if ( perms[p][i] != i )
-         {
-            /* var is moved by component; add, disable multiaggregation and capture */
-            SCIP_CALL( SCIPcaptureVar(scip, permvars[i]) );
-            orcdata->permvars[j] = permvars[i];
-            SCIP_CALL( SCIPhashmapInsertInt(orcdata->permvarmap, (void*) permvars[i], j) );
-            SCIP_CALL( SCIPmarkDoNotMultaggrVar(scip, permvars[i]) );
-            ++j;
-            break;
-         }
+         /* var is moved by component; add, disable multiaggregation and capture */
+         SCIP_CALL( SCIPcaptureVar(scip, permvars[i]) );
+         orcdata->permvars[j] = permvars[i];
+         SCIP_CALL( SCIPhashmapInsertInt(orcdata->permvarmap, (void*) permvars[i], j) );
+         SCIP_CALL( SCIPmarkDoNotMultaggrVar(scip, permvars[i]) );
+
+         /* remember the index-corrected index; it equals the image of permvars[i] in permvarmap */
+         compidx[i] = j;
+         ++j;
       }
+      else
+         compidx[i] = -1;
    }
    assert( j == orcdata->npermvars );
 
@@ -1325,13 +1330,17 @@ SCIP_RETCODE addComponent(
 
       for (i = 0; i < npermvars; ++i)
       {
-         newidx = SCIPhashmapGetImageInt(orcdata->permvarmap, (void*) permvars[i]);
-         if ( newidx >= orcdata->npermvars )
+         newidx = compidx[i];
+         assert( newidx == (SCIPhashmapGetImageInt(orcdata->permvarmap, (void*) permvars[i]) == INT_MAX ? -1
+               : SCIPhashmapGetImageInt(orcdata->permvarmap, (void*) permvars[i])) );
+         if ( newidx < 0 )
             continue;
          assert( newidx >= 0 );
          assert( newidx < orcdata->npermvars );
          assert( orcdata->permvars[newidx] == permvars[i] );
-         newpermidx = SCIPhashmapGetImageInt(orcdata->permvarmap, (void*) permvars[origperm[i]]);
+         assert( 0 <= origperm[i] && origperm[i] < npermvars );
+         newpermidx = compidx[origperm[i]];
+         assert( newpermidx == SCIPhashmapGetImageInt(orcdata->permvarmap, (void*) permvars[origperm[i]]) );
          assert( newpermidx >= 0 );
          assert( newidx < orcdata->npermvars ); /* this is in the orbit of any permutation, so cannot be INT_MAX */
          assert( orcdata->permvars[newpermidx] == permvars[origperm[i]] );
@@ -1339,6 +1348,7 @@ SCIP_RETCODE addComponent(
          newperm[newidx] = newpermidx;
       }
    }
+   SCIPfreeBufferArray(scip, &compidx);
 
    /* global variable bounds */
    SCIP_CALL( SCIPallocBlockMemoryArray(scip, &orcdata->globalvarlbs, orcdata->npermvars) );

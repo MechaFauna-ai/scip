@@ -1734,6 +1734,61 @@ SCIP_Bool isProperPerm(
    return TRUE;
 }
 
+/** checks whether two permutations coincide in their first *permlen entries */
+static
+SCIP_DECL_HASHKEYEQ(permHashKeyEq)
+{  /*lint --e{715}*/
+   int* perm1 = (int*)key1;
+   int* perm2 = (int*)key2;
+   int permlen = *(int*)userptr;
+   int i;
+
+   for( i = 0; i < permlen; ++i )
+   {
+      if( perm1[i] != perm2[i] )
+         return FALSE;
+   }
+
+   return TRUE;
+}
+
+/** returns a hash value of the first *permlen entries of a permutation */
+static
+SCIP_DECL_HASHKEYVAL(permHashKeyVal)
+{  /*lint --e{715}*/
+   int* perm = (int*)key;
+   int permlen = *(int*)userptr;
+   uint64_t hash = (uint64_t)permlen;
+   int i;
+
+   for( i = 0; i < permlen; ++i )
+      hash = (hash ^ (uint64_t)(unsigned int)perm[i]) * UINT64_C(0x100000001B3);
+
+   return hash;
+}
+
+/** creates a hash table of (signed) permutations that compares the first *permlen entries of the permutations
+ *
+ *  The permutations themselves are the elements and keys of the hash table, i.e., SCIPhashtableExists() can be called
+ *  with any array of length *permlen. The memory pointed to by permlen has to stay valid while the table is used.
+ */
+SCIP_RETCODE SCIPcreatePermHashtable(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_HASHTABLE**      permtable,          /**< pointer to store the hash table */
+   int*                  permlen,            /**< pointer to the number of entries to compare */
+   int                   tablesize           /**< initial size of the hash table */
+   )
+{
+   assert(scip != NULL);
+   assert(permtable != NULL);
+   assert(permlen != NULL);
+
+   SCIP_CALL( SCIPhashtableCreate(permtable, SCIPblkmem(scip), tablesize, SCIPhashGetKeyStandard, permHashKeyEq,
+         permHashKeyVal, (void*)permlen) );
+
+   return SCIP_OKAY;
+}
+
 /** returns whether a permutation is already contained in a list of permutations */
 SCIP_Bool isPermKnown(
    int*                  perm,               /**< permutation to be checked */
