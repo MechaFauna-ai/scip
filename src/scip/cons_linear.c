@@ -4790,6 +4790,14 @@ SCIP_RETCODE applyFixings(
    return SCIP_OKAY;
 }
 
+/** number of variables for which the data is prefetched ahead in loops over the variables of a constraint, e.g., in
+ *  addConflictBounds() and tightenBounds()
+ */
+#define VARPREFETCHDIST 16
+
+/** minimal number of variables of a constraint for which variable data is prefetched in these loops */
+#define VARPREFETCHMINLEN 100
+
 /** for each variable in the linear constraint, except the inferred variable, adds one bound to the conflict analysis'
  *  candidate store (bound depends on sign of coefficient and whether the left or right hand side was the reason for the
  *  inference variable's bound change); the conflict analysis can be initialized with the linear constraint being the
@@ -4918,6 +4926,10 @@ SCIP_RETCODE addConflictBounds(
             /* now add bounds as reasons until the residual capacity is exceeded */
             for( i = 0; i < nvars; ++i )
             {
+               /* the variables of long constraints are often not in cache */
+               if( nvars >= VARPREFETCHMINLEN && i + VARPREFETCHDIST < nvars )
+                  SCIPvarPrefetch(vars[i + VARPREFETCHDIST]);
+
                assert( vars != NULL && vals != NULL ); /* for lint */
 
                /* zero coefficients and the inferred variable can be ignored */
@@ -4951,6 +4963,10 @@ SCIP_RETCODE addConflictBounds(
    /* for a bound change on a continuous variable, all locally changed bounds are responsible */
    for( i = 0; i < nvars; ++i )
    {
+      /* the variables of long constraints are often not in cache */
+      if( nvars >= VARPREFETCHMINLEN && i + VARPREFETCHDIST < nvars )
+         SCIPvarPrefetch(vars[i + VARPREFETCHDIST]);
+
       assert(vars != NULL); /* for flexelint */
       assert(vals != NULL); /* for flexelint */
 
@@ -7117,6 +7133,10 @@ SCIP_RETCODE tightenBounds(
       while( v < nvars && v != lastchange && !(*cutoff) )
       {
          oldnchgbds = *nchgbds;
+
+         /* the variables of long constraints are often not in cache */
+         if( nvars >= VARPREFETCHMINLEN && v + VARPREFETCHDIST < nvars )
+            SCIPvarPrefetch(consdata->vars[v + VARPREFETCHDIST]);
 
          if( easycase )
          {

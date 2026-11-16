@@ -799,6 +799,15 @@ SCIP_HOLELIST* SCIPvarGetHolelistOriginal(
    SCIP_VAR*             var                 /**< problem variable */
    );
 
+/** hints the processor to load the data of the variable that is accessed when its status, local and global bounds,
+ *  and bound change information are queried, e.g., some positions ahead in a loop over a long array of variables; this has no
+ *  effect on the variable
+ */
+SCIP_EXPORT
+void SCIPvarPrefetch(
+   SCIP_VAR*             var                 /**< problem variable */
+   );
+
 /** gets global lower bound of variable */
 SCIP_EXPORT
 SCIP_Real SCIPvarGetLbGlobal(
@@ -1226,6 +1235,11 @@ void SCIPvarMarkRelaxationOnly(
       ? (var)->data.original.origdom.holelist                           \
       : NULL)
 #define SCIPvarGetLbGlobal(var)         (var)->glbdom.lb
+#if defined(__GNUC__) || defined(__clang__)
+#define SCIPvarPrefetch(var)            do { __builtin_prefetch(&(var)->glbdom); __builtin_prefetch(&(var)->locdom); \
+                                             __builtin_prefetch(&(var)->lbchginfos); __builtin_prefetch(&(var)->nlbchginfos); \
+                                             __builtin_prefetch(&(var)->closestvubidx); } while( FALSE )
+#endif
 #define SCIPvarGetUbGlobal(var)         (var)->glbdom.ub
 #define SCIPvarGetHolelistGlobal(var)   (var)->glbdom.holelist
 #define SCIPvarGetBestBoundGlobal(var)  ((var)->obj >= 0.0 ? (var)->glbdom.lb : (var)->glbdom.ub)
