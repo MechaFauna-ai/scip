@@ -88,6 +88,51 @@ SCIP_RETCODE SCIPshrinkDisjunctiveVarSet(
    SCIP_Bool             fullshortening      /**< do we want to try the shortening procedure over the whole set (which might be expensive) */
    );
 
+/** cache of clique neighborhoods for repeated calls of SCIPshrinkDisjunctiveVarSetCache() */
+typedef struct SCIP_ShrinkCache SCIP_SHRINKCACHE;
+
+/** creates a clique neighborhood cache for repeated calls of SCIPshrinkDisjunctiveVarSetCache()
+ *
+ *  The cache detects changes of the cliques, global bounds, and problem variables by itself; it should only be kept
+ *  during a sequence of calls, e.g., a single presolving call of a constraint handler, because it can use a lot of
+ *  memory.
+ */
+SCIP_EXPORT
+SCIP_RETCODE SCIPcreateShrinkCache(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_SHRINKCACHE**    cache               /**< pointer to store the cache */
+   );
+
+/** frees a clique neighborhood cache */
+SCIP_EXPORT
+void SCIPfreeShrinkCache(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_SHRINKCACHE**    cache               /**< pointer to the cache */
+   );
+
+/** same as SCIPshrinkDisjunctiveVarSet(), but uses a cache for the clique neighborhoods of the variables, which speeds
+ *  up repeated calls with the same variables; the result is the same as without cache
+ */
+SCIP_EXPORT
+SCIP_RETCODE SCIPshrinkDisjunctiveVarSetCache(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_SHRINKCACHE*     cache,              /**< clique neighborhood cache, or NULL */
+   SCIP_VAR**            vars,               /**< variables array for which at least one must be fulfilled in the
+                                              *   following bounds and boundtypes */
+   SCIP_Real*            bounds,             /**< bounds array for which at least one must be fulfilled */
+   SCIP_Bool*            boundtypes,         /**< boundtypes array (TRUE == SCIP_BOUNDTYPE_UPPER, FALSE == SCIP_BOUNDTYPE_LOWER)
+                                              *   for which at least one must be fulfilled */
+   SCIP_Bool*            redundants,         /**< array which be filled and then indicate if a variable in the set is redundant */
+   int                   nvars,              /**< number of variables */
+   int*                  nredvars,           /**< pointer to store how many variables can be removed */
+   int*                  nglobalred,         /**< pointer to store number of global reductions on variable bounds found
+                                              *   through this set of variables */
+   SCIP_Bool*            setredundant,       /**< pointer to store if we found a global reduction on a variable which was part
+                                              *   of the given set of variables, this makes this disjunction redundant */
+   SCIP_Bool*            glbinfeas,          /**< pointer to store if global infeasibility was detected */
+   SCIP_Bool             fullshortening      /**< do we want to try the shortening procedure over the whole set (which might be expensive) */
+   );
+
 /** @} */
 
 #ifdef __cplusplus

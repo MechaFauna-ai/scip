@@ -4975,6 +4975,7 @@ SCIP_RETCODE SCIPvarFix(
       /* explicitly set variable's bounds if the fixed value was in epsilon range of the old bound (so above call didn't set bound) */
       var->glbdom.lb = fixedval;
       var->glbdom.ub = fixedval;
+      ++stat->glbdomchgcount;
 
       /* ensure local domain is fixed to same value as global domain */
       var->locdom.lb = fixedval;
@@ -10638,6 +10639,7 @@ SCIP_RETCODE varProcessChgLbGlobal(
    oldbound = var->glbdom.lb;
    assert(SCIPsetGetStage(set) == SCIP_STAGE_PROBLEM || SCIPsetIsFeasLE(set, newbound, var->glbdom.ub));
    var->glbdom.lb = newbound;
+   ++stat->glbdomchgcount;
    if( set->exact_enable && SCIPrationalIsLTReal(SCIPvarGetLbGlobalExact(var), newbound) )
       SCIPrationalSetReal(var->exactdata->glbdom.lb, newbound);
    assert( SCIPsetIsFeasLE(set, var->glbdom.lb, var->locdom.lb) );
@@ -10823,6 +10825,7 @@ SCIP_RETCODE varProcessChgUbGlobal(
    oldbound = var->glbdom.ub;
    assert(SCIPsetGetStage(set) == SCIP_STAGE_PROBLEM || SCIPsetIsFeasGE(set, newbound, var->glbdom.lb));
    var->glbdom.ub = newbound;
+   ++stat->glbdomchgcount;
    if( set->exact_enable && SCIPrationalIsGTReal(SCIPvarGetUbGlobalExact(var), newbound) )
       SCIPrationalSetReal(var->exactdata->glbdom.ub, newbound);
 
@@ -11023,6 +11026,7 @@ SCIP_RETCODE varProcessChgLbGlobalExact(
    assert(SCIPsetGetStage(set) == SCIP_STAGE_PROBLEM || SCIPrationalIsLE(newbound, var->exactdata->glbdom.ub));
    SCIPrationalSetRational(var->exactdata->glbdom.lb, newbound);
    var->glbdom.lb = SCIPrationalRoundReal(newbound, SCIP_R_ROUND_DOWNWARDS);
+   ++stat->glbdomchgcount;
    assert( SCIPrationalIsLE(var->exactdata->glbdom.lb, var->exactdata->locdom.lb) );
    assert( SCIPrationalIsLE(var->exactdata->locdom.ub, var->exactdata->glbdom.ub) );
 
@@ -11165,6 +11169,7 @@ SCIP_RETCODE varProcessChgUbGlobalExact(
    assert(SCIPsetGetStage(set) == SCIP_STAGE_PROBLEM || SCIPrationalIsGE(newbound, var->exactdata->glbdom.lb));
    SCIPrationalSetRational(var->exactdata->glbdom.ub, newbound);
    var->glbdom.ub = SCIPrationalRoundReal(newbound, SCIP_R_ROUND_UPWARDS);
+   ++stat->glbdomchgcount;
    assert( SCIPrationalIsLE(var->exactdata->glbdom.lb, var->exactdata->locdom.lb) );
    assert( SCIPrationalIsLE(var->exactdata->locdom.ub, var->exactdata->glbdom.ub) );
 

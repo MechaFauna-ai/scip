@@ -3346,6 +3346,7 @@ SCIP_RETCODE shortenConss(
    SCIP_Bool*            cutoff              /**< pointer to store, if cut off appeared */
    )
 {
+   SCIP_SHRINKCACHE* shrinkcache;
    SCIP_VAR** probvars;
    SCIP_VAR** vars;
    SCIP_VAR* var;
@@ -3412,6 +3413,9 @@ SCIP_RETCODE shortenConss(
    SCIP_CALL( SCIPallocBufferArray(scip, &boundtypes, nbinprobvars) );
    SCIP_CALL( SCIPallocCleanBufferArray(scip, &redundants, nbinprobvars) );
 
+   /* the same variables occur in many constraints, so cache their clique neighborhoods during this pass */
+   SCIP_CALL( SCIPcreateShrinkCache(scip, &shrinkcache) );
+
    for( c = nconss - 1; c >= 0; --c )
    {
       SCIP_Bool redundant = FALSE;
@@ -3475,8 +3479,8 @@ SCIP_RETCODE shortenConss(
          goto TERMINATE;
 
       /* use implications and cliques to derive global fixings and to shrink the number of variables in this constraints */
-      SCIP_CALL( SCIPshrinkDisjunctiveVarSet(scip, probvars, bounds, boundtypes, redundants, consdata->nvars, &nredvars,
-            nfixedvars, &redundant, cutoff, TRUE) );
+      SCIP_CALL( SCIPshrinkDisjunctiveVarSetCache(scip, shrinkcache, probvars, bounds, boundtypes, redundants,
+            consdata->nvars, &nredvars, nfixedvars, &redundant, cutoff, TRUE) );
 
       if( *cutoff )
       {
@@ -3552,6 +3556,7 @@ SCIP_RETCODE shortenConss(
 
  TERMINATE:
    /* free temporary memory */
+   SCIPfreeShrinkCache(scip, &shrinkcache);
    SCIPfreeCleanBufferArray(scip, &redundants);
    SCIPfreeBufferArray(scip, &boundtypes);
    SCIPfreeBufferArray(scip, &bounds);
