@@ -153,6 +153,7 @@ Interface changes
 
 ### New parameters
 
+- `misc/checkincumbentorig`: should a solution that would become the new incumbent also be checked in the original problem (it is rejected if infeasible there)?
 - `separating/machinesched/maxmachines`: maximal number of machines (sets of pairwise ordered jobs) to detect
 - `separating/machinesched/minjobs`: minimal number of jobs on a machine
 - `separating/machinesched/releasecuts`: should cuts be generated for all release-date thresholds (otherwise only for the smallest release date)?
@@ -347,6 +348,15 @@ Interface changes
 - enum SCIP_BOUNDCHGTYPE got extended by new type SCIP_BOUNDCHGTYPE_SYMINFER
 - exchanged definition of SYM_SPEC_BINARY and SYM_SPEC_INTEGER
 - removed SYM_TIMING_DURINGPRESOL and SYM_COMPUTETIMING_DURINGPRESOL, and replaced definition of SYM_TIMING_AFTERPRESOL
+
+Fixed bugs
+----------
+
+- a solution that is feasible in the transformed problem is no longer accepted as new incumbent if it is infeasible in
+  the original problem; tolerances are relative to the constraint activities, so after an aggregation x = c - y with a
+  large constant c a violation that is negligible in the transformed constraint can exceed the tolerance of the
+  original constraint (e.g. bell5 read from .nl: violation 2.5e-4 of -24 g12 + f12 <= 0 after f12 = 1000 - a12), and
+  SCIP ended with a best solution that is infeasible in the original problem
 
 Unit tests
 ----------
