@@ -441,6 +441,7 @@ struct SCIP_Set
    SCIP_Bool             misc_estimexternmem;/**< should the usage of external memory be estimated? */
    SCIP_Bool             misc_avoidmemout;   /**< try to avoid running into memory limit by restricting plugins like heuristics? */
    SCIP_Bool             misc_transorigsols; /**< should SCIP try to transfer original solutions to the transformed space (after presolving)? */
+   SCIP_Bool             misc_checkincumbentorig; /**< should a solution that would become the new incumbent also be checked in the original problem? */
    SCIP_Bool             misc_transsolsorig; /**< should SCIP try to transfer transformed solutions to the original space (after solving)? */
    SCIP_Bool             misc_calcintegral;  /**< should SCIP calculate the primal dual integral value which may require
                                               *   a large number of additional clock calls (and decrease the performance)? */

@@ -1819,7 +1819,51 @@ SCIP_RETCODE SCIPprimalAddCurrentSol(
    return SCIP_OKAY;
 }
 
+/** checks a solution that is feasible in the transformed problem and would become the new incumbent also in the
+ *  original problem, as done for the best solution at the end of the solve
+ *
+ *  Tolerances are relative to the activities of the constraints in which they are checked. If presolving rewrites a
+ *  constraint, e.g., by an aggregation x = c - y with a large constant c, a violation that is negligible relative to
+ *  the transformed constraint can exceed the feasibility tolerance of the original constraint. Such a solution must
+ *  not become the incumbent, because SCIP would otherwise end with a best solution that is infeasible in the original
+ *  problem.
+ */
+static
+SCIP_RETCODE checkNewIncumbentOrig(
+   SCIP_PRIMAL*          primal,             /**< primal data */
+   BMS_BLKMEM*           blkmem,             /**< block memory */
+   SCIP_SET*             set,                /**< global SCIP settings */
+   SCIP_MESSAGEHDLR*     messagehdlr,        /**< message handler */
+   SCIP_STAT*            stat,               /**< problem statistics data */
+   SCIP_PROB*            origprob,           /**< original problem */
+   SCIP_SOL*             sol,                /**< primal CIP solution feasible in the transformed problem */
+   int                   insertpos,          /**< position of the solution in the solution storage */
+   SCIP_Bool             printreason,        /**< Should all reasons of violations be printed? */
+   SCIP_Bool*            feasible            /**< pointer to store whether the solution is feasible */
+   )
+{
+   assert(feasible != NULL);
+   assert(*feasible);
+
+   if( insertpos != 0 || !set->misc_checkincumbentorig || set->exact_enable || SCIPsolIsOriginal(sol) )
+      return SCIP_OKAY;
+
+   /* same checks as for the best solution at the end of the solve: bounds, integrality, and all original constraints
+    * except modifiable ones
+    */
+   SCIP_CALL( SCIPsolCheckOrig(sol, set, messagehdlr, blkmem, stat, origprob, primal, printreason, FALSE, TRUE, TRUE,
+         TRUE, FALSE, feasible) );
+
+   if( !*feasible )
+   {
+      SCIPsetDebugMsg(set, "solution feasible in the transformed problem rejected as incumbent: infeasible in the original problem\n");
+   }
+
+   return SCIP_OKAY;
+}
+
 /** checks primal solution; if feasible, adds it to storage by copying it */
+
 SCIP_RETCODE SCIPprimalTrySol(
    SCIP_PRIMAL*          primal,             /**< primal data */
    BMS_BLKMEM*           blkmem,             /**< block memory */
@@ -1864,6 +1908,12 @@ SCIP_RETCODE SCIPprimalTrySol(
       /* check solution for feasibility */
       SCIP_CALL( SCIPsolCheck(sol, set, messagehdlr, blkmem, stat, transprob, printreason, completely, checkbounds,
             checkintegrality, checklprows, &feasible) );
+
+      if( feasible )
+      {
+         SCIP_CALL( checkNewIncumbentOrig(primal, blkmem, set, messagehdlr, stat, origprob, sol, insertpos, printreason,
+               &feasible) );
+      }
    }
    else
       feasible = FALSE;
@@ -1936,6 +1986,12 @@ SCIP_RETCODE SCIPprimalTrySolFree(
       /* check solution for feasibility */
       SCIP_CALL( SCIPsolCheck(*sol, set, messagehdlr, blkmem, stat, transprob, printreason, completely, checkbounds,
             checkintegrality, checklprows, &feasible) );
+
+      if( feasible )
+      {
+         SCIP_CALL( checkNewIncumbentOrig(primal, blkmem, set, messagehdlr, stat, origprob, *sol, insertpos, printreason,
+               &feasible) );
+      }
    }
    else
       feasible = FALSE;

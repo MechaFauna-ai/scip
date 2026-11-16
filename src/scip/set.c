@@ -326,6 +326,7 @@
 #define SCIP_DEFAULT_MISC_ESTIMEXTERNMEM   TRUE /**< should the usage of external memory be estimated? */
 #define SCIP_DEFAULT_MISC_AVOIDMEMOUT      TRUE /**< try to avoid running into memory limit by restricting plugins like heuristics? */
 #define SCIP_DEFAULT_MISC_TRANSORIGSOLS    TRUE /**< should SCIP try to transfer original solutions to the transformed space (after presolving)? */
+#define SCIP_DEFAULT_MISC_CHECKINCUMBENTORIG TRUE /**< should a solution that would become the new incumbent also be checked in the original problem? */
 #define SCIP_DEFAULT_MISC_TRANSSOLSORIG    TRUE /**< should SCIP try to transfer transformed solutions to the original space (after solving)? */
 #define SCIP_DEFAULT_MISC_CALCINTEGRAL     TRUE /**< should SCIP calculate the primal dual integral? */
 #define SCIP_DEFAULT_MISC_FINITESOLSTORE  FALSE /**< should SCIP try to remove infinite fixings from solutions copied to the solution store? */
@@ -2265,6 +2266,11 @@ SCIP_RETCODE SCIPsetCreate(
          "misc/transorigsols",
          "should SCIP try to transfer original solutions to the transformed space (after presolving)?",
          &(*set)->misc_transorigsols, FALSE, SCIP_DEFAULT_MISC_TRANSORIGSOLS,
+         NULL, NULL) );
+   SCIP_CALL( SCIPsetAddBoolParam(*set, messagehdlr, blkmem,
+         "misc/checkincumbentorig",
+         "should a solution that would become the new incumbent also be checked in the original problem (it is rejected if infeasible there)?",
+         &(*set)->misc_checkincumbentorig, TRUE, SCIP_DEFAULT_MISC_CHECKINCUMBENTORIG,
          NULL, NULL) );
    SCIP_CALL( SCIPsetAddBoolParam(*set, messagehdlr, blkmem,
          "misc/transsolsorig",
