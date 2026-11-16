@@ -67,6 +67,8 @@ Performance improvements
   handling, e.g., fiball is presolved in 2.2 instead of 3.7 seconds
 - without a dense clique table, the clique separator marks the nodes of the cliques of a node, instead of the cliques,
   when selecting adjacent nodes in the maximum weight clique search if this is cheaper; same cliques are found
+- the clique presolving of AND constraints determines the active representatives of the operands once per pairwise
+  check instead of once per pair of operands
 
 Interface changes
 -----------------
