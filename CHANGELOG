@@ -37,6 +37,8 @@ Features
 Performance improvements
 ------------------------
 
+- avoid calculating gaps at each stopping check during solving when both gap limits are zero
+
 - packing/partitioning orbitope constraints catch bound change events of their variables and skip propagation when no
   bound changed since their last propagation, which avoids repeated full scans during probing
 - the implied bounds separator aggregates implied bounds on a variable over cliques of binary variables: if at most one
