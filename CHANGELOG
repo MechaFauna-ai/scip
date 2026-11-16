@@ -87,6 +87,8 @@ Performance improvements
 - lexicographic reduction stores for every permutation the index of its variables in the global variable map, so that
   ordering the variables by branching decisions needs no hash map lookups, and resets its branching information via
   the list of branched variables instead of walking the shadow tree path again; same reductions
+- orbital reduction stores the indices moved by each permutation of a component and computes the orbits of the
+  stabilizer subgroup from these instead of scanning all variables of the component for every permutation; same orbits
 
 Interface changes
 -----------------
