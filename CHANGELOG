@@ -80,6 +80,8 @@ Performance improvements
   the possible values of the activity of the integral variables; same propagation
 - with GCC on x86-64 Linux, the efficacy computation of the c-MIR cut generation heuristic is additionally compiled for
   SSE4.1 and selected at load time, which rounds with an exact floor instruction instead of a library call; same cuts
+- the localsearch heuristic passes the coefficient of a column entry directly when computing tight moves for the
+  constraints of a variable instead of reading it again from the constraint; same moves
 
 Interface changes
 -----------------
