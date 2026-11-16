@@ -71,6 +71,8 @@ Performance improvements
   check instead of once per pair of operands
 - for linear constraints with at least 100 variables, the bound tightening loop and the collection of conflict reasons
   prefetch the data of the variables some positions ahead, since it is often not in cache
+- the ranged row propagation of linear constraints skips runs of values without solution arithmetically when counting
+  the possible values of the activity of the integral variables; same propagation
 
 Interface changes
 -----------------
