@@ -6091,7 +6091,18 @@ SCIP_RETCODE rangedRowPropagation(
          SCIP_Real value2;
          SCIP_Real minvalue = SCIP_INVALID;
          SCIP_Real maxvalue = SCIP_INVALID;
+         SCIP_Bool skipnonsols;
          int nsols = 0;
+
+         /* Between two solutions, the value of the first variables that is congruent to the activity of the other
+          * variables and closest to the sides moves by gcdinfvars per step until it wraps around by gcd, so long runs
+          * of non-solutions can be skipped arithmetically. This is only done if all numbers are exactly representable
+          * and the wrap-around points are far enough from the epsilon tolerances of the rounding functions; two steps
+          * before each wrap-around are always evaluated.
+          */
+         skipnonsols = (gcd >= 2 && 2.0 * gcdinfvars > 10.0 * SCIPepsilon(scip) * gcd
+            && REALABS(minactinfvars) < 1e15 && REALABS(maxactinfvars) < 1e15 && REALABS(lhs) < 1e15
+            && REALABS(rhs) < 1e15 && gcd < 1e15);
 
          value = SCIPceil(scip, minactinfvars - SCIPfeastol(scip));
 
@@ -6118,6 +6129,32 @@ SCIP_RETCODE rangedRowPropagation(
                    minvalue = value;
 
                 maxvalue = value;
+             }
+             else if( skipnonsols )
+             {
+                /* value2 is the smallest number >= lhs congruent to value modulo gcd, and it exceeds rhs; until it
+                 * reaches lhs + gcd, increasing value by gcdinfvars increases value2 by gcdinfvars, so the next values
+                 * are no solutions either
+                 */
+                SCIP_Real nskip = floor((lhs + gcd - value2) / gcdinfvars) - 2.0;
+
+                if( nskip >= 1.0 )
+                {
+#ifndef NDEBUG
+                   SCIP_Real skipvalue;
+
+                   for( skipvalue = value + gcdinfvars; skipvalue <= value + nskip * gcdinfvars
+                      && SCIPisLE(scip, skipvalue, maxactinfvars); skipvalue += gcdinfvars )
+                   {
+                      SCIP_Real skipvalue2 = skipvalue + gcd * (SCIPceil(scip, (lhs - skipvalue) / gcd));
+
+                      if( !SCIPisGE(scip, skipvalue2, lhs) )
+                         skipvalue2 += gcd;
+                      assert(!SCIPisLE(scip, skipvalue2, rhs));
+                   }
+#endif
+                   value += nskip * gcdinfvars;
+                }
              }
              value += gcdinfvars;
          }
@@ -6147,6 +6184,32 @@ SCIP_RETCODE rangedRowPropagation(
                   maxvalue = value;
                   assert(maxvalue > minvalue);
                   break;
+               }
+               else if( skipnonsols )
+               {
+                  /* value2 is the largest number <= rhs congruent to value modulo gcd, and it is below lhs; until it
+                   * reaches rhs - gcd, decreasing value by gcdinfvars decreases value2 by gcdinfvars, so the next values
+                   * are no solutions either
+                   */
+                  SCIP_Real nskip = floor((value2 + gcd - rhs) / gcdinfvars) - 2.0;
+
+                  if( nskip >= 1.0 )
+                  {
+#ifndef NDEBUG
+                     SCIP_Real skipvalue;
+
+                     for( skipvalue = value - gcdinfvars; skipvalue >= value - nskip * gcdinfvars
+                        && SCIPisGE(scip, skipvalue, minactinfvars); skipvalue -= gcdinfvars )
+                     {
+                        SCIP_Real skipvalue2 = skipvalue + gcd * (SCIPfloor(scip, (rhs - skipvalue) / gcd));
+
+                        if( !SCIPisLE(scip, skipvalue2, rhs) )
+                           skipvalue2 -= gcd;
+                        assert(!SCIPisGE(scip, skipvalue2, lhs));
+                     }
+#endif
+                     value -= nskip * gcdinfvars;
+                  }
                }
                value -= gcdinfvars;
             }
