@@ -2678,6 +2678,8 @@ SCIP_RETCODE cliquePresolve(
 {
    SCIP_CONSDATA* consdata;
    SCIP_VAR** vars;
+   SCIP_VAR** activevars = NULL;
+   SCIP_Bool* activevals = NULL;
    SCIP_VAR* var1;
    SCIP_VAR* var2;
    int nvars;
@@ -2805,37 +2807,32 @@ SCIP_RETCODE cliquePresolve(
    /* check if two operands are in a clique */
    if( SCIPconsGetNUpgradeLocks(cons) == 0 )
    {
+      /* get the active representatives of all operands once instead of once per pair */
+      SCIP_CALL( SCIPallocBufferArray(scip, &activevars, nvars) );
+      SCIP_CALL( SCIPallocBufferArray(scip, &activevals, nvars) );
+      for( v = 0; v < nvars; ++v )
+      {
+         assert(vars != NULL);
+         activevars[v] = vars[v];
+         negated = FALSE;
+         SCIP_CALL( SCIPgetProbvarBinary(scip, &activevars[v], &negated) );
+         assert(activevars[v] != NULL);
+         activevals[v] = !negated;
+      }
+
       for( v = nvars - 1; v > 0; --v )
       {
          assert(vars != NULL);
 
-         var1 = vars[v];
-         assert(var1 != NULL);
-         negated = FALSE;
-
-         SCIP_CALL( SCIPgetProbvarBinary(scip, &var1, &negated) );
-         assert(var1 != NULL);
-
-         if( negated )
-            value1 = FALSE;
-         else
-            value1 = TRUE;
+         var1 = activevars[v];
+         value1 = activevals[v];
 
          assert(SCIPvarGetStatus(var1) != SCIP_VARSTATUS_FIXED);
 
          for( v2 = v - 1; v2 >= 0; --v2 )
          {
-            var2 = vars[v2];
-            assert(var2 != NULL);
-
-            negated = FALSE;
-            SCIP_CALL( SCIPgetProbvarBinary(scip, &var2, &negated) );
-            assert(var2 != NULL);
-
-            if( negated )
-               value2 = FALSE;
-            else
-               value2 = TRUE;
+            var2 = activevars[v2];
+            value2 = activevals[v2];
 
             assert(SCIPvarGetStatus(var2) != SCIP_VARSTATUS_FIXED);
 
@@ -2890,10 +2887,16 @@ SCIP_RETCODE cliquePresolve(
                SCIP_CALL( SCIPdelCons(scip, cons) );
                ++(*ndelconss);
 
+               SCIPfreeBufferArray(scip, &activevals);
+               SCIPfreeBufferArray(scip, &activevars);
+
                return SCIP_OKAY;
             }
          }
       }
+
+      SCIPfreeBufferArray(scip, &activevals);
+      SCIPfreeBufferArray(scip, &activevars);
    }
 
    var1 = consdata->resvar;
@@ -3116,39 +3119,36 @@ SCIP_RETCODE cliquePresolve(
    }
 
    /* case 2 */
-   /* check for negated cliques in the operands */
+   /* check for negated cliques in the operands; get the active representatives of all operands once */
+   if( vstart >= vend )
+   {
+      SCIP_CALL( SCIPallocBufferArray(scip, &activevars, nvars) );
+      SCIP_CALL( SCIPallocBufferArray(scip, &activevals, nvars) );
+      for( v = 0; v < nvars; ++v )
+      {
+         assert(vars != NULL);
+         activevars[v] = vars[v];
+         negated = FALSE;
+         SCIP_CALL( SCIPgetProbvarBinary(scip, &activevars[v], &negated) );
+         assert(activevars[v] != NULL);
+         activevals[v] = !negated;
+      }
+   }
+
    for( v = vstart; v >= vend; --v )
    {
       assert(vars != NULL);
 
-      var1 = vars[v];
-      assert(var1 != NULL);
-
-      negated = FALSE;
-      SCIP_CALL( SCIPgetProbvarBinary(scip, &var1, &negated) );
-      assert(var1 != NULL);
-
-      if( negated )
-         value1 = FALSE;
-      else
-         value1 = TRUE;
+      var1 = activevars[v];
+      value1 = activevals[v];
 
       for( v2 = nvars - 1; v2 >= 0; --v2 )
       {
          if( v2 == v )
             continue;
 
-         var2 = vars[v2];
-         assert(var2 != NULL);
-
-         negated = FALSE;
-         SCIP_CALL( SCIPgetProbvarBinary(scip, &var2, &negated) );
-         assert(var2 != NULL);
-
-         if( negated )
-            value2 = FALSE;
-         else
-            value2 = TRUE;
+         var2 = activevars[v2];
+         value2 = activevals[v2];
 
          assert(SCIPvarGetNegatedVar(var2) != NULL);
 
@@ -3167,6 +3167,9 @@ SCIP_RETCODE cliquePresolve(
             *cutoff = *cutoff || infeasible;
             if( fixed )
                ++(*nfixedvars);
+
+            SCIPfreeBufferArray(scip, &activevals);
+            SCIPfreeBufferArray(scip, &activevars);
 
             return SCIP_OKAY;
          }
@@ -3196,8 +3199,17 @@ SCIP_RETCODE cliquePresolve(
          if( aggregated )
             ++(*naggrvars);
 
+         SCIPfreeBufferArray(scip, &activevals);
+         SCIPfreeBufferArray(scip, &activevars);
+
          return SCIP_OKAY;
       }
+   }
+
+   if( vstart >= vend )
+   {
+      SCIPfreeBufferArray(scip, &activevals);
+      SCIPfreeBufferArray(scip, &activevars);
    }
 
    /* case 3 */
