@@ -24437,6 +24437,29 @@ SCIP_HOLELIST* SCIPvarGetHolelistOriginal(
    return NULL;
 }
 
+#undef SCIPvarPrefetch
+
+/** hints the processor to load the data of the variable that is accessed when its status, local and global bounds,
+ *  and bound change information are queried, e.g., some positions ahead in a loop over a long array of variables; this has no
+ *  effect on the variable
+ */
+void SCIPvarPrefetch(
+   SCIP_VAR*             var                 /**< problem variable */
+   )
+{
+   assert(var != NULL);
+
+#if defined(__GNUC__) || defined(__clang__)
+   __builtin_prefetch(&var->glbdom);
+   __builtin_prefetch(&var->locdom);
+   __builtin_prefetch(&var->lbchginfos);
+   __builtin_prefetch(&var->nlbchginfos);
+   __builtin_prefetch(&var->closestvubidx); /* the status bit field follows */
+#else
+   (void)var;
+#endif
+}
+
 /** gets global lower bound of variable */
 SCIP_Real SCIPvarGetLbGlobal(
    SCIP_VAR*             var                 /**< problem variable */

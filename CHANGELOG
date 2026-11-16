@@ -69,6 +69,8 @@ Performance improvements
   when selecting adjacent nodes in the maximum weight clique search if this is cheaper; same cliques are found
 - the clique presolving of AND constraints determines the active representatives of the operands once per pairwise
   check instead of once per pair of operands
+- for linear constraints with at least 100 variables, the bound tightening loop and the collection of conflict reasons
+  prefetch the data of the variables some positions ahead, since it is often not in cache
 
 Interface changes
 -----------------
@@ -90,6 +92,8 @@ Interface changes
 
 ### New API functions
 
+- added SCIPvarPrefetch() to hint the processor to load the data of a variable that is accessed when querying its
+  status, bounds, and bound changes
 - added SCIPcreatePermHashtable() to create a hash table of permutations
 - added SCIPcreateShrinkCache(), SCIPfreeShrinkCache(), and SCIPshrinkDisjunctiveVarSetCache() to call
   SCIPshrinkDisjunctiveVarSet() repeatedly with a cache for the clique neighborhoods of the variables
