@@ -78,6 +78,8 @@ Performance improvements
   prefetch the data of the variables some positions ahead, since it is often not in cache
 - the ranged row propagation of linear constraints skips runs of values without solution arithmetically when counting
   the possible values of the activity of the integral variables; same propagation
+- the event data of linear constraints stores a copy of the coefficient of the variable, so that processing a bound
+  change event does not need to load the coefficient array of the constraint, which is often not in cache
 - with GCC on x86-64 Linux, the efficacy computation of the c-MIR cut generation heuristic is additionally compiled for
   SSE4.1 and selected at load time, which rounds with an exact floor instruction instead of a library call; same cuts
 - the localsearch heuristic passes the coefficient of a column entry directly when computing tight moves for the

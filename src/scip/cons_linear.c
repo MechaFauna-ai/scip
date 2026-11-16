@@ -269,6 +269,8 @@ struct SCIP_ConsData
 struct SCIP_EventData
 {
    SCIP_CONS*            cons;               /**< linear constraint to process the bound change for */
+   SCIP_Real             val;                /**< coefficient of the variable, a copy of vals[varpos] of the constraint data,
+                                              *   which saves a likely cache miss in the event execution */
    int                   varpos;             /**< position of variable in vars array */
    int                   filterpos;          /**< position of event in variable's event filter */
 };
@@ -738,6 +740,7 @@ SCIP_RETCODE consCatchEvent(
 
    SCIP_CALL( SCIPallocBlockMemory(scip, &(consdata->eventdata[pos])) ); /*lint !e866*/
    consdata->eventdata[pos]->cons = cons;
+   consdata->eventdata[pos]->val = consdata->vals[pos];
    consdata->eventdata[pos]->varpos = pos;
 
    SCIP_CALL( SCIPcatchVarEvent(scip, consdata->vars[pos],
@@ -3954,6 +3957,8 @@ SCIP_RETCODE chgCoefPos(
 
    /* change the value */
    consdata->vals[pos] = newval;
+   if( consdata->eventdata != NULL && consdata->eventdata[pos] != NULL )
+      consdata->eventdata[pos]->val = newval;
 
    if( consdata->coefsorted )
    {
@@ -4041,7 +4046,11 @@ SCIP_RETCODE scaleCons(
          SCIP_CALL( delCoefPos(scip, cons, i) );
       }
       else
+      {
          consdata->vals[i] = newval;
+         if( consdata->eventdata != NULL && consdata->eventdata[i] != NULL )
+            consdata->eventdata[i]->val = newval;
+      }
    }
 
    /* scale the sides */
@@ -17277,15 +17286,14 @@ SCIP_DECL_EVENTEXEC(eventExecLinear)
       SCIP_Real oldbound;
       SCIP_Real newbound;
       SCIP_Real val;
-      int varpos;
 
-      varpos = eventdata->varpos;
-      assert(0 <= varpos && varpos < consdata->nvars);
+      assert(0 <= eventdata->varpos && eventdata->varpos < consdata->nvars);
       oldbound = SCIPeventGetOldbound(event);
       newbound = SCIPeventGetNewbound(event);
       assert(var != NULL);
-      assert(consdata->vars[varpos] == var);
-      val = consdata->vals[varpos];
+      assert(consdata->vars[eventdata->varpos] == var);
+      val = eventdata->val;
+      assert(val == consdata->vals[eventdata->varpos]); /*lint !e777*/
 
       /* we only need to update the activities if the constraint is active,
        * otherwise we mark them to be invalid
@@ -17390,15 +17398,14 @@ SCIP_DECL_EVENTEXEC(eventExecLinear)
       SCIP_Real oldbound;
       SCIP_Real newbound;
       SCIP_Real val;
-      int varpos;
 
-      varpos = eventdata->varpos;
-      assert(0 <= varpos && varpos < consdata->nvars);
+      assert(0 <= eventdata->varpos && eventdata->varpos < consdata->nvars);
       oldbound = SCIPeventGetOldbound(event);
       newbound = SCIPeventGetNewbound(event);
       assert(var != NULL);
-      assert(consdata->vars[varpos] == var);
-      val = consdata->vals[varpos];
+      assert(consdata->vars[eventdata->varpos] == var);
+      val = eventdata->val;
+      assert(val == consdata->vals[eventdata->varpos]); /*lint !e777*/
 
       consdata->rangedrowpropagated = 0;
 
