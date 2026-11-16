@@ -217,7 +217,11 @@ SCIP_Bool SCIPsolveIsStopped(
    }
    if( SCIPgetConcurrentMemTotal(set->scip) >= set->limit_memory*1048576.0 - stat->externmemestim * (1.0 + SCIPgetNConcurrentSolvers(set->scip)) )
       stat->status = SCIP_STATUS_MEMLIMIT;
-   else if( SCIPgetNLimSolsFound(set->scip) > 0
+   /* During solving, the bound check above already handles closed gaps. Both gaps are then nonnegative,
+    * so zero gap limits cannot stop the solve. Keep the checks in earlier stages unchanged.
+    */
+   else if( (set->stage < SCIP_STAGE_SOLVING || set->limit_gap > 0.0 || set->limit_absgap > 0.0)
+      && SCIPgetNLimSolsFound(set->scip) > 0
       && (SCIPsetIsLT(set, SCIPgetGap(set->scip), set->limit_gap)
          || SCIPsetIsLT(set, (SCIPgetUpperbound(set->scip) - SCIPgetLowerbound(set->scip)) * SCIPgetTransObjscale(set->scip), set->limit_absgap )) )
       stat->status = SCIP_STATUS_GAPLIMIT;
