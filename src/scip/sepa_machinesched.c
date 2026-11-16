@@ -60,6 +60,7 @@
 #include "scip/scip_message.h"
 #include "scip/scip_numerics.h"
 #include "scip/scip_param.h"
+#include "scip/scip_pricer.h"
 #include "scip/scip_prob.h"
 #include "scip/scip_sepa.h"
 #include "scip/scip_solvingstats.h"
@@ -277,7 +278,8 @@ SCIP_RETCODE collectArcs(
       int neg = -1;
       int k;
 
-      if( SCIProwIsLocal(row) || SCIProwGetNNonz(row) != 3 || SCIProwGetNLPNonz(row) != 3 )
+      /* modifiable rows may receive further columns by pricing, which would invalidate the inferred orderings */
+      if( SCIProwIsLocal(row) || SCIProwIsModifiable(row) || SCIProwGetNNonz(row) != 3 || SCIProwGetNLPNonz(row) != 3 )
          continue;
 
       lhs = SCIProwGetLhs(row);
@@ -318,9 +320,11 @@ SCIP_RETCODE collectArcs(
       if( k < 3 || bin < 0 || pos < 0 || neg < 0 )
          continue;
 
-      /* the two start time variables need coefficients of the same absolute value */
+      /* the two start time variables need coefficients of exactly the same absolute value; with a tolerance, the
+       * discarded residual could make the inferred distances invalid for start times of large magnitude
+       */
       scale = rowvals[pos];
-      if( !SCIPisEQ(scip, scale, -rowvals[neg]) )
+      if( scale != -rowvals[neg] ) /*lint !e777*/
          continue;
 
       bincoef /= scale;
@@ -708,6 +712,10 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpMachinesched)
    assert(sepadata != NULL);
 
    if( sepadata->tried || SCIPgetDepth(scip) > 0 || sepadata->maxmachines <= 0 )
+      return SCIP_OKAY;
+
+   /* with active pricers, rows can change, so the detected structure may become invalid */
+   if( SCIPgetNActivePricers(scip) > 0 )
       return SCIP_OKAY;
 
    sepadata->tried = TRUE;
