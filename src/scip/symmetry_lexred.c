@@ -94,6 +94,7 @@ struct LexRedPermData
    int*                  perm;               /**< permutation for lexicographic reduction */
    int*                  invperm;            /**< inverse permutation */
    SCIP_HASHMAP*         varmap;             /**< map of variables to indices in vars array */
+   int*                  symvaridx;          /**< index of each variable in the symvarmap of the master data (dynamic only) */
    SYM_SYMTYPE           symtype;            /**< type of symmetries in perm */
    SCIP_Real*            vardomaincenter;    /**< array of centers of variable domains */
 };
@@ -129,8 +130,7 @@ typedef struct NodeDepthBranchIndex NODEDEPTHBRANCHINDEX;
 struct VarArrayNodeDepthBranchIndex
 {
    NODEDEPTHBRANCHINDEX* nodedepthbranchindices; /**< pointer to branch-and-bound tree information */
-   SCIP_LEXREDDATA*      masterdata;             /**< pointer to global data for lexicographic reduction propagator */
-   SCIP_VAR**            vars;                   /**< pointer to variable array */
+   int*                  symvaridx;              /**< index in the symvarmap of each variable of the permutation */
 };
 typedef struct VarArrayNodeDepthBranchIndex VARARRAYNODEDEPTHBRANCHINDEX;
 
@@ -175,7 +175,9 @@ SCIP_RETCODE lexdataFree(
       if ( (*lexdata)->isdynamic )
       {
          assert( (*lexdata)->varmap != NULL );
+         assert( (*lexdata)->symvaridx != NULL );
          SCIPhashmapFree(&((*lexdata)->varmap));
+         SCIPfreeBlockMemoryArray(scip, &(*lexdata)->symvaridx, (*lexdata)->nvars);
       }
 
       /* release variables */
@@ -206,6 +208,7 @@ SCIP_RETCODE lexdataFree(
       assert( (*lexdata)->perm == NULL );
       assert( (*lexdata)->vars == NULL );
       assert( (*lexdata)->varmap == NULL );
+      assert( (*lexdata)->symvaridx == NULL );
    }
 #endif
    SCIPfreeBlockMemory(scip, lexdata);
@@ -380,6 +383,7 @@ SCIP_RETCODE lexdataCreate(
 
       SCIP_CALL( SCIPhashmapCreate(&(*lexdata)->varmap, SCIPblkmem(scip), (*lexdata)->nvars) );
       assert( (*lexdata)->varmap != NULL );
+      SCIP_CALL( SCIPallocBlockMemoryArray(scip, &(*lexdata)->symvaridx, (*lexdata)->nvars) );
 
       for (i = 0; i < (*lexdata)->nvars; ++i)
       {
@@ -392,14 +396,21 @@ SCIP_RETCODE lexdataCreate(
 
          /* var already added to hashmap */
          if ( SCIPhashmapExists(masterdata->symvarmap, (void*) var) )
+         {
+            (*lexdata)->symvaridx[i] = SCIPhashmapGetImageInt(masterdata->symvarmap, (void*) var);
             continue;
+         }
 
          /* the hashmap in symvarmap maps to a unique index */
+         (*lexdata)->symvaridx[i] = masterdata->nsymvars;
          SCIP_CALL( SCIPhashmapInsertInt(masterdata->symvarmap, (void*) var, masterdata->nsymvars++) );
       }
    }
    else
+   {
       (*lexdata)->varmap = NULL;
+      (*lexdata)->symvaridx = NULL;
+   }
 
    return SCIP_OKAY;
 }
@@ -424,23 +435,21 @@ SCIP_DECL_SORTINDCOMP(sortbynodedepthbranchindices)
    /* unpack the dataptr */
    VARARRAYNODEDEPTHBRANCHINDEX* vararraynodedepthbranchindices;
    NODEDEPTHBRANCHINDEX* nodedepthbranchindices;
-   SCIP_LEXREDDATA* masterdata;
-   SCIP_VAR** vars;
+   int* symvaridx;
    NODEDEPTHBRANCHINDEX* index1;
    NODEDEPTHBRANCHINDEX* index2;
 
    vararraynodedepthbranchindices = (VARARRAYNODEDEPTHBRANCHINDEX*) dataptr;
    nodedepthbranchindices = vararraynodedepthbranchindices->nodedepthbranchindices;
-   masterdata = vararraynodedepthbranchindices->masterdata;
-   vars = vararraynodedepthbranchindices->vars;
+   symvaridx = vararraynodedepthbranchindices->symvaridx;
 
    /* comparing the same element is an identity operation */
    if ( ind1 == ind2 )
       return 0;
 
    /* sort by depth, then by index, in increasing order */
-   index1 = &(nodedepthbranchindices[SCIPhashmapGetImageInt(masterdata->symvarmap, vars[ind1])]);
-   index2 = &(nodedepthbranchindices[SCIPhashmapGetImageInt(masterdata->symvarmap, vars[ind2])]);
+   index1 = &(nodedepthbranchindices[symvaridx[ind1]]);
+   index2 = &(nodedepthbranchindices[symvaridx[ind2]]);
 
    if ( index1->nodedepth < index2->nodedepth )
       return -1;
@@ -524,7 +533,8 @@ SCIP_RETCODE getVarOrder(
          assert( var != NULL );
 
          assert( SCIPhashmapExists(masterdata->symvarmap, (void*) var) );
-         varindex = SCIPhashmapGetImageInt(masterdata->symvarmap, var);
+         varindex = lexdata->symvaridx[i];
+         assert( varindex == SCIPhashmapGetImageInt(masterdata->symvarmap, var) );
          assert( varindex >= 0 );
          assert( varindex < masterdata->nsymvars );
 
@@ -576,8 +586,7 @@ SCIP_RETCODE getVarOrder(
       /* sort the first n elements of varorder by depth, then by index, as indicated by nodedepthbranchindices. */
       VARARRAYNODEDEPTHBRANCHINDEX vararraynodedepthbranchindices;
       vararraynodedepthbranchindices.nodedepthbranchindices = nodedepthbranchindices;
-      vararraynodedepthbranchindices.masterdata = masterdata;
-      vararraynodedepthbranchindices.vars = vars;
+      vararraynodedepthbranchindices.symvaridx = lexdata->symvaridx;
       SCIPsortInd(varorder, sortbynodedepthbranchindices, (void*) &vararraynodedepthbranchindices, *nselvars);
    }
 
@@ -1751,7 +1760,11 @@ SCIP_RETCODE shadowtreeFillNodeDepthBranchIndices(
 }
 
 
-/** cleans nodedepthbranchindices array */
+/** cleans nodedepthbranchindices array
+ *
+ *  Exactly the entries of the variables in branchvars have been set by shadowtreeFillNodeDepthBranchIndices(), so it
+ *  suffices to reset those instead of walking the rooted path of the shadow tree again.
+ */
 static
 SCIP_RETCODE shadowtreeUndoNodeDepthBranchIndices(
    SCIP*                 scip,               /**< SCIP data structure */
@@ -1763,16 +1776,14 @@ SCIP_RETCODE shadowtreeUndoNodeDepthBranchIndices(
    SCIP_NODE*            focusnode           /**< focusnode to which the rooted path is evaluated */
    )
 {
-   /* undo the operations from shadowtreeFillNodeDepthBranchIndices, which makes nodedepthbranchindices clean */
-   SCIP_SHADOWNODE* shadownode;
-   SCIP_SHADOWNODE* shadowchild;
-#ifndef NDEBUG
-   int shadowdepth;
-#endif
    SCIP_VAR* var;
    int varindex;
+#ifndef NDEBUG
+   SCIP_SHADOWNODE* shadownode;
+   SCIP_SHADOWNODE* shadowchild;
    int c;
    int i;
+#endif
 
    assert( scip != NULL );
    assert( masterdata != NULL );
@@ -1786,60 +1797,45 @@ SCIP_RETCODE shadowtreeUndoNodeDepthBranchIndices(
    assert( shadowtree != NULL );
    assert( focusnode != NULL );
 
-   shadownode = SCIPshadowTreeGetShadowNode(shadowtree, focusnode);
-#ifndef NDEBUG
-   shadowdepth = SCIPnodeGetDepth(focusnode);
-#endif
-
-   /* clean nbranchvars array */
+   /* reset the entries of the branched variables and clean the branchvars array */
    while ( *nbranchvars > 0 )
-      branchvars[--(*nbranchvars)] = NULL;
+   {
+      var = branchvars[--(*nbranchvars)];
+      assert( var != NULL );
+      assert( SCIPhashmapExists(masterdata->symvarmap, (void*) var) );
+
+      varindex = SCIPhashmapGetImageInt(masterdata->symvarmap, var);
+      assert( varindex >= 0 );
+      assert( varindex < masterdata->nsymvars );
+      assert( nodedepthbranchindices[varindex].nodedepth > 0 );
+
+      nodedepthbranchindices[varindex].index = 0;
+      nodedepthbranchindices[varindex].nodedepth = 0;
+      branchvars[*nbranchvars] = NULL;
+   }
    assert( *nbranchvars == 0 );
 
-   /* we start looking one level lower, because we consider the branching decisions each time */
-   /* coverity[dereference] */
-   shadownode = shadownode->parent;
-
-   /* now, walk from the leaf to the root. Each time look at all the children of the node considered,
-    * and save the variable depth and index in the branching array. It is important to consider all children each time,
-    * because we need to comply with the instance where in different branches it is branched on different variables.
-    * This has to be consistent.
-    */
-   while (shadownode != NULL)
-   {
 #ifndef NDEBUG
-      assert( shadowdepth > 0 );
-#endif
+   /* check that all entries set along the rooted path of the shadow tree are clean now */
+   shadownode = SCIPshadowTreeGetShadowNode(shadowtree, focusnode);
+   assert( shadownode != NULL );
+   for (shadownode = shadownode->parent; shadownode != NULL; shadownode = shadownode->parent)
+   {
       for (c = 0; c < shadownode->nchildren; ++c)
       {
          shadowchild = shadownode->children[c];
-         /* get the variables branched on, for each of the children (that's likely 1 variable each time) */
          for (i = 0; i < shadowchild->nbranchingdecisions; ++i)
          {
             var = shadowchild->branchingdecisions[i].var;
-            /* ignore variables not relevant for lexicographic reduction */
             if ( !SCIPhashmapExists(masterdata->symvarmap, (void*) var) )
                continue;
-            assert( SCIPhashmapExists(masterdata->symvarmap, (void*) var) );
-
             varindex = SCIPhashmapGetImageInt(masterdata->symvarmap, var);
-            assert( varindex >= 0 );
-            assert( varindex < masterdata->nsymvars );
-
-            /* reset */
-            nodedepthbranchindices[varindex].index = 0;
-            nodedepthbranchindices[varindex].nodedepth = 0;
+            assert( nodedepthbranchindices[varindex].index == 0 );
+            assert( nodedepthbranchindices[varindex].nodedepth == 0 );
          }
       }
-
-      /* prepare for the next iteration */
-      shadownode = shadownode->parent;
-#ifndef NDEBUG
-      --shadowdepth;
-#endif
    }
-   /* In the last iteration, we handled the branching decisions at the root node, so shadowdepth must have value 0. */
-   assert( shadowdepth == 0 );
+#endif
 
    return SCIP_OKAY;
 }
