@@ -2313,13 +2313,13 @@ void findShortestOccurlist(
       assert(var != NULL);
 
       /* it might be that a variable is not yet put into the occurlist, then this constraint cannot cover another */
-      if( !SCIPhashmapExists(varstopos, (void*) var) )
+      pos = SCIPhashmapGetImageInt(varstopos, (void*)var);
+      if( pos == INT_MAX )
       {
+         assert(!SCIPhashmapExists(varstopos, (void*) var));
          *nentries = 0;
          return;
       }
-
-      pos = SCIPhashmapGetImageInt(varstopos, (void*)var);
       assert(0 < pos && pos <= occurlistlength);
 
       --pos;
@@ -2513,8 +2513,10 @@ SCIP_RETCODE addConsToOccurList(
       assert(SCIPvarIsActive(var) || (SCIPvarGetNegatedVar(var) != NULL && SCIPvarIsActive(SCIPvarGetNegatedVar(var))));
 
       /* check if the variable is not yet put into the occurlist */
-      if( !SCIPhashmapExists(varstopos, (void*) var) )
+      pos = SCIPhashmapGetImageInt(varstopos, (void*)var);
+      if( pos == INT_MAX )
       {
+         assert(!SCIPhashmapExists(varstopos, (void*) var));
          pos = *occurlistlength;
          assert(pos <= occurlistsize);
 
@@ -2539,7 +2541,6 @@ SCIP_RETCODE addConsToOccurList(
       }
       else
       {
-         pos = SCIPhashmapGetImageInt(varstopos, (void*)var);
          assert(0 < pos && pos <= *occurlistlength);
 
          --pos;
@@ -2576,6 +2577,8 @@ SCIP_RETCODE removeRedundantNonZeros(
    SCIP_CONS*            cons,               /**< logicor constraint to check if it covers another */
    SCIP_VAR*             artvar,             /**< artificial negated variable of constraint */
    int                   artpos,             /**< position to replace constraint variable with artvar */
+   int*                  varposs,            /**< images of the constraint variables in varstopos, INT_MAX if missing */
+   int                   artvarpos,          /**< image of artvar in varstopos */
    SCIP_HASHMAP*         varstopos,          /**< map for mapping variables to positions in the occurlist */
    SCIP_CONS***          occurlist,          /**< column representation of logicor constraints */
    int*                  noccurlistentries,  /**< number of constraints for each variable in the occurlist */
@@ -2623,16 +2626,38 @@ SCIP_RETCODE removeRedundantNonZeros(
 
    *deleted = FALSE;
 
-   /* temporary exchange the variable for finding the shortest list */
    oldvar = vars[artpos];
    assert(oldvar == SCIPvarGetNegatedVar(artvar));
-   vars[artpos] = artvar;
+   assert(artvarpos == SCIPhashmapGetImageInt(varstopos, (void*)artvar));
 
-   /* determine shortest column */
-   findShortestOccurlist(vars, nvars, varstopos, occurlist, noccurlistentries, occurlistlength, &nentries, &shortestlist);
+   /* determine shortest column of the constraint with artvar instead of oldvar, as findShortestOccurlist() does, but
+    * with the precomputed positions of the variables in the occurlist
+    */
+   nentries = INT_MAX;
+   shortestlist = NULL;
+   for( v = nvars - 1; v >= 0; --v )
+   {
+      pos = (v == artpos) ? artvarpos : varposs[v];
+      assert(pos == SCIPhashmapGetImageInt(varstopos, (void*)(v == artpos ? artvar : vars[v])));
 
-   /* correct exchanged variable with constraint variables */
-   vars[artpos] = oldvar;
+      /* it might be that a variable is not yet put into the occurlist, then this constraint cannot cover another */
+      if( pos == INT_MAX )
+      {
+         nentries = 0;
+         shortestlist = NULL;
+         break;
+      }
+      assert(0 < pos && pos <= occurlistlength);
+
+      --pos;
+
+      /* remember the shortest list */
+      if( noccurlistentries[pos] < nentries )
+      {
+         nentries = noccurlistentries[pos];
+         shortestlist = occurlist[pos];
+      }
+   }
 
    /* one variable which does not appear in the column representation anymore */
    if( nentries == 0 )
@@ -2759,7 +2784,7 @@ SCIP_RETCODE removeRedundantNonZeros(
 
                   if( consdata1->nvars > nvars )
                   {
-                     pos = SCIPhashmapGetImageInt(varstopos, (void*)artvar);
+                     pos = artvarpos;
                      assert(0 < pos && pos <= occurlistlength);
 
                      --pos;
@@ -2832,6 +2857,8 @@ SCIP_RETCODE strengthenConss(
    SCIP_CONSDATA* consdata;
    SCIP_CONS* cons;
    SCIP_VAR* artvar;
+   int* varposs;
+   int* artvarposs;
    int nvars;
    int c;
    int v;
@@ -2871,11 +2898,26 @@ SCIP_RETCODE strengthenConss(
       vars = consdata->vars;
       assert(vars != NULL);
 
+      /* look up the occurlist positions of the variables and their negations only once; they do not change in this
+       * loop, since the variables of cons are not changed and no variables are added to the occurlist
+       */
+      SCIP_CALL( SCIPallocBufferArray(scip, &varposs, nvars) );
+      SCIP_CALL( SCIPallocBufferArray(scip, &artvarposs, nvars) );
+
       for( v = nvars - 1; v >= 0; --v )
       {
          artvar = SCIPvarGetNegatedVar(vars[v]);
+         varposs[v] = SCIPhashmapGetImageInt(varstopos, (void*)vars[v]);
+         artvarposs[v] = (artvar != NULL) ? SCIPhashmapGetImageInt(varstopos, (void*)artvar) : INT_MAX;
+      }
 
-         if( artvar != NULL && SCIPhashmapExists(varstopos, (void*) artvar) )
+      for( v = nvars - 1; v >= 0; --v )
+      {
+         artvar = SCIPvarGetNegatedVar(vars[v]);
+         assert(consdata->vars == vars && consdata->nvars == nvars);
+         assert((artvar != NULL && SCIPhashmapExists(varstopos, (void*) artvar)) == (artvarposs[v] != INT_MAX));
+
+         if( artvarposs[v] != INT_MAX )
          {
             SCIP_Bool deleted;
 
@@ -2885,8 +2927,8 @@ SCIP_RETCODE strengthenConss(
              *        non-zeros, therefor change also findShortestOccurlist() to return the corresponding
              *        variable/position
              */
-            SCIP_CALL( removeRedundantNonZeros(scip, cons, artvar, v, varstopos, occurlist, noccurlistentries,
-            occurlistlength, eventhdlr, nchgcoefs, &deleted) );
+            SCIP_CALL( removeRedundantNonZeros(scip, cons, artvar, v, varposs, artvarposs[v], varstopos, occurlist,
+                  noccurlistentries, occurlistlength, eventhdlr, nchgcoefs, &deleted) );
 
             if( deleted )
             {
@@ -2898,6 +2940,9 @@ SCIP_RETCODE strengthenConss(
                assert(SCIPconsIsActive(cons));
          }
       }
+
+      SCIPfreeBufferArray(scip, &artvarposs);
+      SCIPfreeBufferArray(scip, &varposs);
    }
 
    return SCIP_OKAY;
