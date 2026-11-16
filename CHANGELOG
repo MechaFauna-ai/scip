@@ -82,6 +82,9 @@ Performance improvements
   SSE4.1 and selected at load time, which rounds with an exact floor instruction instead of a library call; same cuts
 - the localsearch heuristic passes the coefficient of a column entry directly when computing tight moves for the
   constraints of a variable instead of reading it again from the constraint; same moves
+- lexicographic reduction stores for every permutation the index of its variables in the global variable map, so that
+  ordering the variables by branching decisions needs no hash map lookups, and resets its branching information via
+  the list of branched variables instead of walking the shadow tree path again; same reductions
 
 Interface changes
 -----------------
