@@ -37,6 +37,8 @@ Features
 Performance improvements
 ------------------------
 
+- packing/partitioning orbitope constraints catch bound change events of their variables and skip propagation when no
+  bound changed since their last propagation, which avoids repeated full scans during probing
 - the implied bounds separator aggregates implied bounds on a variable over cliques of binary variables: if at most one
   of the literals l_i can be one and l_i = 1 implies y <= p_i, it separates y + sum_i (ub(y) - p_i) l_i <= ub(y), which
   dominates the single implied bound cuts (analogously for lower bounds)

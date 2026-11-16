@@ -86,6 +86,7 @@
 #include "scip/scip_cons.h"
 #include "scip/scip_copy.h"
 #include "scip/scip_cut.h"
+#include "scip/scip_event.h"
 #include "scip/scip_general.h"
 #include "scip/scip_lp.h"
 #include "scip/scip_mem.h"
@@ -119,6 +120,10 @@
 
 #define DEFAULT_FORCECONSCOPY     FALSE /**< whether orbitope constraints should be forced to be copied to sub SCIPs */
 
+/* event handler properties */
+#define EVENTHDLR_NAME         "orbitope_pp"
+#define EVENTHDLR_DESC         "bound change event handler for packing/partitioning orbitope constraints"
+
 /*
  * Data structures
  */
@@ -127,6 +132,7 @@
 struct SCIP_ConshdlrData
 {
    SCIP_Bool             forceconscopy;      /**< whether orbitope constraints should be forced to be copied to sub SCIPs */
+   SCIP_EVENTHDLR*       eventhdlr;          /**< event handler for bound changes of the orbitope variables */
 };
 
 /** constraint data for orbitope constraints */
@@ -144,6 +150,14 @@ struct SCIP_ConsData
    SCIP_Bool             resolveprop;        /**< should propagation be resolved?                                    */
    SCIP_Bool             istrianglefixed;    /**< has the upper right triangle already globally been fixed to zero?  */
    SCIP_Bool             ismodelcons;        /**< whether the orbitope is a model constraint                         */
+   SCIP_Bool             changed;            /**< may a local bound of a variable have changed since the last
+                                              *   propagation? */
+   SCIP_Bool             eventscaught;       /**< are the bound change events of the variables caught? */
+#ifndef NDEBUG
+   SCIP_Real*            dbgbounds;          /**< local lower and upper bounds of the variables after the last
+                                              *   propagation */
+   SCIP_Bool             dbgboundsvalid;     /**< is dbgbounds valid? */
+#endif
 };
 
 
@@ -190,6 +204,9 @@ SCIP_RETCODE consdataFree(
 
    SCIPfreeBlockMemoryArrayNull(scip, &((*consdata)->tmpvals), nrows + ncols);
    SCIPfreeBlockMemoryArrayNull(scip, &((*consdata)->tmpvars), nrows + ncols);
+#ifndef NDEBUG
+   SCIPfreeBlockMemoryArrayNull(scip, &((*consdata)->dbgbounds), 2 * nrows * ncols);
+#endif
 
    SCIPfreeBlockMemory(scip, consdata);
 
@@ -237,6 +254,12 @@ SCIP_RETCODE consdataCreate(
    (*consdata)->resolveprop = resolveprop;
    (*consdata)->istrianglefixed = FALSE;
    (*consdata)->ismodelcons = ismodelcons;
+   (*consdata)->changed = TRUE;
+   (*consdata)->eventscaught = FALSE;
+#ifndef NDEBUG
+   (*consdata)->dbgbounds = NULL;
+   (*consdata)->dbgboundsvalid = FALSE;
+#endif
 
    /* get transformed variables, if we are in the transformed problem */
    if ( SCIPisTransformed(scip) )
@@ -828,6 +851,11 @@ SCIP_RETCODE propagateCons(
    if( !consdata->ismodelcons && !SCIPallowStrongDualReds(scip) )
       return SCIP_OKAY;
 
+   /* the propagation only depends on the local bounds of the variables; bound changes from now on, including the ones
+    * of this propagation, set the flag again via the event handler
+    */
+   consdata->changed = FALSE;
+
    consdata = SCIPconsGetData(cons);
    assert( consdata != NULL );
    assert( consdata->nrows > 0 );
@@ -1145,6 +1173,114 @@ SCIP_RETCODE propagateCons(
    SCIPfreeBufferArray(scip, &frontiersteps);
    SCIPfreeBufferArray(scip, &lastones);
    SCIPfreeBufferArray(scip, &firstnonzeros);
+
+   /* an infeasible node has to be detected again if the same bounds occur again */
+   if ( *infeasible )
+      consdata->changed = TRUE;
+
+#ifndef NDEBUG
+   /* remember the bounds to check that the constraint is only skipped if no bound changed */
+   if ( consdata->dbgbounds == NULL )
+   {
+      SCIP_CALL( SCIPallocBlockMemoryArray(scip, &consdata->dbgbounds, 2 * nrows * ncols) );
+   }
+   for (i = 0; i < nrows; ++i)
+   {
+      for (j = 0; j < ncols; ++j)
+      {
+         consdata->dbgbounds[2 * (i * ncols + j)] = SCIPvarGetLbLocal(vars[i][j]);
+         consdata->dbgbounds[2 * (i * ncols + j) + 1] = SCIPvarGetUbLocal(vars[i][j]);
+      }
+   }
+   consdata->dbgboundsvalid = TRUE;
+#endif
+
+   return SCIP_OKAY;
+}
+
+#ifndef NDEBUG
+/** checks that the local bounds of the variables did not change since the last propagation */
+static
+SCIP_Bool boundsUnchanged(
+   SCIP_CONSDATA*        consdata            /**< constraint data */
+   )
+{
+   int i;
+   int j;
+
+   if ( !consdata->dbgboundsvalid )
+      return TRUE;
+
+   for (i = 0; i < consdata->nrows; ++i)
+   {
+      for (j = 0; j < consdata->ncols; ++j)
+      {
+         int pos = 2 * (i * consdata->ncols + j);
+
+         if ( consdata->dbgbounds[pos] != SCIPvarGetLbLocal(consdata->vars[i][j]) /*lint !e777*/
+            || consdata->dbgbounds[pos + 1] != SCIPvarGetUbLocal(consdata->vars[i][j]) ) /*lint !e777*/
+            return FALSE;
+      }
+   }
+
+   return TRUE;
+}
+#endif
+
+/** catches or drops the bound change events of all variables of an orbitope constraint */
+static
+SCIP_RETCODE catchOrDropEvents(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_CONS*            cons,               /**< orbitope constraint */
+   SCIP_Bool             catchevents         /**< catch (TRUE) or drop (FALSE) the events? */
+   )
+{
+   SCIP_CONSHDLRDATA* conshdlrdata;
+   SCIP_CONSDATA* consdata;
+   int i;
+   int j;
+
+   conshdlrdata = SCIPconshdlrGetData(SCIPconsGetHdlr(cons));
+   assert( conshdlrdata != NULL );
+   assert( conshdlrdata->eventhdlr != NULL );
+
+   consdata = SCIPconsGetData(cons);
+   assert( consdata != NULL );
+
+   for (i = 0; i < consdata->nrows; ++i)
+   {
+      for (j = 0; j < consdata->ncols; ++j)
+      {
+         if ( catchevents )
+         {
+            SCIP_CALL( SCIPcatchVarEvent(scip, consdata->vars[i][j],
+                  SCIP_EVENTTYPE_BOUNDCHANGED | SCIP_EVENTTYPE_VARFIXED,
+                  conshdlrdata->eventhdlr, (SCIP_EVENTDATA*)consdata, NULL) );
+         }
+         else
+         {
+            SCIP_CALL( SCIPdropVarEvent(scip, consdata->vars[i][j],
+                  SCIP_EVENTTYPE_BOUNDCHANGED | SCIP_EVENTTYPE_VARFIXED,
+                  conshdlrdata->eventhdlr, (SCIP_EVENTDATA*)consdata, -1) );
+         }
+      }
+   }
+
+   consdata->eventscaught = catchevents;
+
+   /* bounds may have changed while the events were not caught */
+   consdata->changed = TRUE;
+
+   return SCIP_OKAY;
+}
+
+/** execution method of the event handler: marks the orbitope constraint as changed */
+static
+SCIP_DECL_EVENTEXEC(eventExecOrbitopePP)
+{  /*lint --e{715}*/
+   assert( eventdata != NULL );
+
+   ((SCIP_CONSDATA*)eventdata)->changed = TRUE;
 
    return SCIP_OKAY;
 }
@@ -1858,6 +1994,18 @@ SCIP_RETCODE replaceAggregatedVarsOrbitopePP(
          assert( SCIPvarIsActive(var) || SCIPvarGetStatus(var) == SCIP_VARSTATUS_NEGATED || SCIPvarGetStatus(var) == SCIP_VARSTATUS_FIXED );
          if ( var != vars[i][j] )
          {
+            /* move the bound change events from the old to the new variable */
+            if ( consdata->eventscaught )
+            {
+               SCIP_CONSHDLRDATA* conshdlrdata = SCIPconshdlrGetData(SCIPconsGetHdlr(cons));
+
+               SCIP_CALL( SCIPdropVarEvent(scip, vars[i][j], SCIP_EVENTTYPE_BOUNDCHANGED | SCIP_EVENTTYPE_VARFIXED,
+                     conshdlrdata->eventhdlr, (SCIP_EVENTDATA*)consdata, -1) );
+               SCIP_CALL( SCIPcatchVarEvent(scip, var, SCIP_EVENTTYPE_BOUNDCHANGED | SCIP_EVENTTYPE_VARFIXED,
+                     conshdlrdata->eventhdlr, (SCIP_EVENTDATA*)consdata, NULL) );
+               consdata->changed = TRUE;
+            }
+
             SCIP_CALL( SCIPunlockVarCons(scip, vars[i][j], cons, TRUE, TRUE) );
             SCIP_CALL( SCIPreleaseVar(scip, &vars[i][j]) );
             vars[i][j] = var;
@@ -2149,6 +2297,16 @@ SCIP_DECL_CONSPROP(consPropOrbitopePP)
       int nfixed;
 
       assert( conss[c] != 0 );
+
+      /* the propagation only depends on the local bounds of the variables; if none changed since the last propagation,
+       * which then did not find any reduction (otherwise its own bound changes would have marked it), it would not
+       * find anything now
+       */
+      if ( !SCIPconsGetData(conss[c])->changed )
+      {
+         assert( boundsUnchanged(SCIPconsGetData(conss[c])) );
+         continue;
+      }
 
       SCIPdebugMsg(scip, "Propagation of packing/partitioning orbitope constraint <%s> ...\n",
          SCIPconsGetName(conss[c]));
@@ -2659,6 +2817,28 @@ SCIP_DECL_CONSGETNVARS(consGetNVarsOrbitopePP)
  * constraint specific interface methods
  */
 
+/** constraint activation notification method of constraint handler */
+static
+SCIP_DECL_CONSACTIVE(consActiveOrbitopePP)
+{  /*lint --e{715}*/
+   assert( cons != NULL );
+
+   SCIP_CALL( catchOrDropEvents(scip, cons, TRUE) );
+
+   return SCIP_OKAY;
+}
+
+/** constraint deactivation notification method of constraint handler */
+static
+SCIP_DECL_CONSDEACTIVE(consDeactiveOrbitopePP)
+{  /*lint --e{715}*/
+   assert( cons != NULL );
+
+   SCIP_CALL( catchOrDropEvents(scip, cons, FALSE) );
+
+   return SCIP_OKAY;
+}
+
 /** creates the handler for packing/partitioning orbitope constraints and includes it in SCIP */
 SCIP_RETCODE SCIPincludeConshdlrOrbitopePP(
    SCIP*                 scip                /**< SCIP data structure */
@@ -2695,6 +2875,14 @@ SCIP_RETCODE SCIPincludeConshdlrOrbitopePP(
          CONSHDLR_SEPAPRIORITY, CONSHDLR_DELAYSEPA) );
    SCIP_CALL( SCIPsetConshdlrTrans(scip, conshdlr, consTransOrbitopePP) );
    SCIP_CALL( SCIPsetConshdlrEnforelax(scip, conshdlr, consEnforelaxOrbitopePP) );
+   SCIP_CALL( SCIPsetConshdlrActive(scip, conshdlr, consActiveOrbitopePP) );
+   SCIP_CALL( SCIPsetConshdlrDeactive(scip, conshdlr, consDeactiveOrbitopePP) );
+
+   /* include event handler for bound changes of the orbitope variables */
+   conshdlrdata->eventhdlr = NULL;
+   SCIP_CALL( SCIPincludeEventhdlrBasic(scip, &conshdlrdata->eventhdlr, EVENTHDLR_NAME, EVENTHDLR_DESC,
+         eventExecOrbitopePP, NULL) );
+   assert( conshdlrdata->eventhdlr != NULL );
 
    SCIP_CALL( SCIPaddBoolParam(scip, "constraints/" CONSHDLR_NAME "/forceconscopy",
          "Whether orbitope constraints should be forced to be copied to sub SCIPs.",
