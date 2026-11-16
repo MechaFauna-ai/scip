@@ -55,6 +55,10 @@ Performance improvements
   again during its depth-first search for the topological order, which avoids rescanning large cliques
 - probing in presolving records per probing only the variables whose bounds changed instead of copying and comparing
   the bounds of all variables; same deductions, less work per probing
+- the logicor constraint handler caches the clique neighborhoods of the variables during a pass of shortening the
+  constraints with implications and cliques (SCIPshrinkDisjunctiveVarSetCache()); the cache is flushed when cliques,
+  global bounds, or problem variables change, so the reductions are unchanged; e.g., ex10 is presolved in 125 instead
+  of 222 seconds
 
 Interface changes
 -----------------
@@ -76,6 +80,8 @@ Interface changes
 
 ### New API functions
 
+- added SCIPcreateShrinkCache(), SCIPfreeShrinkCache(), and SCIPshrinkDisjunctiveVarSetCache() to call
+  SCIPshrinkDisjunctiveVarSet() repeatedly with a cache for the clique neighborhoods of the variables
 - added SYMcomputeSymmetryGeneratorsNode() to compute generators of the automorphism group of an entire (node set) of a symmetry detection graph
 - added SCIPiisfinderGetEnable() to check whether an iis finder is enabled
 - added SCIPiisfinderSetEnable() to set whether an iis finder is enabled

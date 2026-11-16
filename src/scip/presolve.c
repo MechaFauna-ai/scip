@@ -43,7 +43,10 @@
 #include "scip/scip_numerics.h"
 #include "scip/scip_tree.h"
 #include "scip/struct_mem.h"
+#include "scip/struct_implics.h"
+#include "scip/struct_prob.h"
 #include "scip/struct_scip.h"
+#include "scip/struct_stat.h"
 #include "scip/tree.h"
 
 /*
@@ -828,6 +831,276 @@ void collectNonBinaryImplicationData(
    }
 }
 
+/** initial size of the entry pool of a clique neighborhood cache */
+#define SHRINKCACHE_INITSIZE  (1 << 16)
+/** maximal size of the entry pool of a clique neighborhood cache (2^24 entries = 64 MB) */
+#define SHRINKCACHE_MAXSIZE   (1 << 24)
+
+/** cache of the clique neighborhoods of binary variables for repeated calls of SCIPshrinkDisjunctiveVarSetCache()
+ *
+ *  For a literal (a binary problem variable together with a value), collectBinaryCliqueData() visits all members of
+ *  all cliques containing the literal, skips the variable itself and globally fixed members, and maps the others to
+ *  their implication index (probindex, plus the number of problem variables if the member appears with value TRUE).
+ *  The cache stores this index sequence, in exactly the order in which it is visited, with -1 separating the cliques,
+ *  so that a repeated visit reads a compact int array instead of the data of every clique member variable.
+ *
+ *  The cached sequences only depend on the cliques, the global bounds and the probindices of the problem variables.
+ *  The cache is flushed whenever one of them may have changed, which is detected by comparing a signature consisting of
+ *  the global bound change counter, the clique table entry and creation counters, and the problem variable counts.
+ */
+struct SCIP_ShrinkCache
+{
+   int*                  entries;            /**< pool of cached index sequences */
+   SCIP_Longint*         starts;             /**< start position in entries of the sequence of each literal */
+   int*                  lens;               /**< length of the sequence of each literal */
+   unsigned int*         stamps;             /**< epoch in which the sequence of each literal was stored */
+   SCIP_Longint          nentries;           /**< number of used entries in the pool */
+   SCIP_Longint          entriessize;        /**< size of the pool */
+   SCIP_Longint          glbdomchgcount;     /**< global bound change counter of the current epoch */
+   SCIP_Longint          ncliqueentries;     /**< number of clique table entries of the current epoch */
+   int                   ncreatedcliques;    /**< number of ever created cliques of the current epoch */
+   int                   nprobvars;          /**< number of problem variables of the current epoch */
+   int                   nbinvars;           /**< number of binary problem variables of the current epoch */
+   int                   nintvars;           /**< number of integer problem variables of the current epoch */
+   int                   litssize;           /**< size of the starts, lens, and stamps arrays */
+   unsigned int          epoch;              /**< current epoch, a sequence is valid if its stamp equals the epoch */
+   SCIP_Longint          nhits;              /**< number of sequences read from the cache */
+   SCIP_Longint          nmisses;            /**< number of sequences computed */
+};
+
+/** creates a clique neighborhood cache for repeated calls of SCIPshrinkDisjunctiveVarSetCache() */
+SCIP_RETCODE SCIPcreateShrinkCache(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_SHRINKCACHE**    cache               /**< pointer to store the cache */
+   )
+{
+   assert(scip != NULL);
+   assert(cache != NULL);
+
+   SCIP_CALL( SCIPallocBlockMemory(scip, cache) );
+   BMSclearMemory(*cache);
+
+   return SCIP_OKAY;
+}
+
+/** frees a clique neighborhood cache */
+void SCIPfreeShrinkCache(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_SHRINKCACHE**    cache               /**< pointer to the cache */
+   )
+{
+   assert(scip != NULL);
+   assert(cache != NULL);
+
+   if( *cache == NULL )
+      return;
+
+   SCIPdebugMsg(scip, "clique neighborhood cache: %" SCIP_LONGINT_FORMAT " hits, %" SCIP_LONGINT_FORMAT " misses\n",
+      (*cache)->nhits, (*cache)->nmisses);
+
+   SCIPfreeBlockMemoryArrayNull(scip, &(*cache)->entries, (*cache)->entriessize);
+   SCIPfreeBlockMemoryArrayNull(scip, &(*cache)->stamps, (*cache)->litssize);
+   SCIPfreeBlockMemoryArrayNull(scip, &(*cache)->lens, (*cache)->litssize);
+   SCIPfreeBlockMemoryArrayNull(scip, &(*cache)->starts, (*cache)->litssize);
+   SCIPfreeBlockMemory(scip, cache);
+}
+
+/** starts a new epoch of the cache, if the cliques, global bounds, or problem variables may have changed */
+static
+SCIP_RETCODE shrinkCacheValidate(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_SHRINKCACHE*     cache               /**< clique neighborhood cache */
+   )
+{
+   int nlits;
+
+   assert(scip != NULL);
+   assert(cache != NULL);
+   assert(scip->transprob != NULL);
+   assert(scip->cliquetable != NULL);
+
+   nlits = 2 * scip->transprob->nvars;
+
+   if( cache->epoch > 0
+      && cache->glbdomchgcount == scip->stat->glbdomchgcount
+      && cache->ncliqueentries == scip->cliquetable->nentries
+      && cache->ncreatedcliques == scip->cliquetable->ncreatedcliques
+      && cache->nprobvars == scip->transprob->nvars
+      && cache->nbinvars == scip->transprob->nbinvars
+      && cache->nintvars == scip->transprob->nintvars )
+   {
+      assert(nlits <= cache->litssize);
+      return SCIP_OKAY;
+   }
+
+   cache->glbdomchgcount = scip->stat->glbdomchgcount;
+   cache->ncliqueentries = scip->cliquetable->nentries;
+   cache->ncreatedcliques = scip->cliquetable->ncreatedcliques;
+   cache->nprobvars = scip->transprob->nvars;
+   cache->nbinvars = scip->transprob->nbinvars;
+   cache->nintvars = scip->transprob->nintvars;
+   cache->nentries = 0;
+
+   if( nlits > cache->litssize )
+   {
+      int newsize = SCIPcalcMemGrowSize(scip, nlits);
+
+      SCIP_CALL( SCIPreallocBlockMemoryArray(scip, &cache->starts, cache->litssize, newsize) );
+      SCIP_CALL( SCIPreallocBlockMemoryArray(scip, &cache->lens, cache->litssize, newsize) );
+      SCIP_CALL( SCIPreallocBlockMemoryArray(scip, &cache->stamps, cache->litssize, newsize) );
+      BMSclearMemoryArray(&cache->stamps[cache->litssize], newsize - cache->litssize);
+      cache->litssize = newsize;
+   }
+
+   /* the stamps of all literals are smaller than the new epoch; on overflow, reset them */
+   ++cache->epoch;
+   if( cache->epoch == 0 )
+   {
+      BMSclearMemoryArray(cache->stamps, cache->litssize);
+      cache->epoch = 1;
+   }
+
+   return SCIP_OKAY;
+}
+
+/** stores the clique neighborhood index sequence of a literal in the cache, see struct SCIP_ShrinkCache
+ *
+ *  returns a pointer to the sequence, or NULL if the pool is full
+ */
+static
+SCIP_RETCODE shrinkCacheStore(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_SHRINKCACHE*     cache,              /**< clique neighborhood cache */
+   SCIP_VAR*             var,                /**< binary variable */
+   SCIP_Bool             value,              /**< value of the literal */
+   int                   varidx,             /**< index of the literal */
+   int                   nvars,              /**< number of problem variables */
+   SCIP_Bool*            stored              /**< pointer to store whether the sequence was stored */
+   )
+{
+   SCIP_CLIQUE** cliques;
+   SCIP_Longint len;
+   int ncliques;
+   int c;
+   int w;
+
+   assert(cache != NULL);
+   assert(varidx >= 0 && varidx < cache->litssize);
+   assert(stored != NULL);
+
+   *stored = FALSE;
+
+   cliques = SCIPvarGetCliques(var, value);
+   ncliques = SCIPvarGetNCliques(var, value);
+
+   /* upper bound on the length of the sequence */
+   len = 0;
+   for( c = ncliques - 1; c >= 0; --c )
+      len += SCIPcliqueGetNVars(cliques[c]);
+
+   if( cache->nentries + len > SHRINKCACHE_MAXSIZE )
+      return SCIP_OKAY;
+
+   if( cache->nentries + len > cache->entriessize )
+   {
+      SCIP_Longint newsize = MAX(cache->entriessize, SHRINKCACHE_INITSIZE);
+
+      while( newsize < cache->nentries + len )
+         newsize *= 2;
+      newsize = MIN(newsize, SHRINKCACHE_MAXSIZE);
+
+      SCIP_CALL( SCIPreallocBlockMemoryArray(scip, &cache->entries, cache->entriessize, newsize) );
+      cache->entriessize = newsize;
+   }
+
+   cache->starts[varidx] = cache->nentries;
+
+   /* this loop has to visit the clique members in the same order as the loop in collectBinaryCliqueData() */
+   for( c = ncliques - 1; c >= 0; --c )
+   {
+      SCIP_VAR** clqvars = SCIPcliqueGetVars(cliques[c]);
+      SCIP_Bool* clqvalues = SCIPcliqueGetValues(cliques[c]);
+      SCIP_Longint cliquestart = cache->nentries;
+
+      for( w = SCIPcliqueGetNVars(cliques[c]) - 1; w >= 0; --w )
+      {
+         int idx;
+
+         if( clqvars[w] == var || SCIPvarGetLbGlobal(clqvars[w]) > 0.5 || SCIPvarGetUbGlobal(clqvars[w]) < 0.5 )
+            continue;
+
+         idx = SCIPvarGetProbindex(clqvars[w]);
+         assert(idx >= 0);
+
+         if( clqvalues[w] )
+            idx += nvars;
+
+         cache->entries[cache->nentries++] = idx;
+      }
+
+      /* separate the cliques, empty ones can be dropped */
+      if( cache->nentries > cliquestart && c > 0 )
+         cache->entries[cache->nentries++] = -1;
+   }
+   assert(cache->nentries <= cache->entriessize);
+
+   cache->lens[varidx] = (int)(cache->nentries - cache->starts[varidx]);
+   cache->stamps[varidx] = cache->epoch;
+   *stored = TRUE;
+
+   return SCIP_OKAY;
+}
+
+#ifndef NDEBUG
+/** checks that the cached sequence of a literal equals the sequence computed from the cliques */
+static
+SCIP_Bool shrinkCacheCheck(
+   SCIP_SHRINKCACHE*     cache,              /**< clique neighborhood cache */
+   SCIP_VAR*             var,                /**< binary variable */
+   SCIP_Bool             value,              /**< value of the literal */
+   int                   varidx,             /**< index of the literal */
+   int                   nvars               /**< number of problem variables */
+   )
+{
+   SCIP_CLIQUE** cliques = SCIPvarGetCliques(var, value);
+   int* seq = &cache->entries[cache->starts[varidx]];
+   int len = cache->lens[varidx];
+   int pos = 0;
+   int c;
+   int w;
+
+   for( c = SCIPvarGetNCliques(var, value) - 1; c >= 0; --c )
+   {
+      SCIP_VAR** clqvars = SCIPcliqueGetVars(cliques[c]);
+      SCIP_Bool* clqvalues = SCIPcliqueGetValues(cliques[c]);
+      int cliquestart = pos;
+
+      for( w = SCIPcliqueGetNVars(cliques[c]) - 1; w >= 0; --w )
+      {
+         int idx;
+
+         if( clqvars[w] == var || SCIPvarGetLbGlobal(clqvars[w]) > 0.5 || SCIPvarGetUbGlobal(clqvars[w]) < 0.5 )
+            continue;
+
+         idx = SCIPvarGetProbindex(clqvars[w]) + (clqvalues[w] ? nvars : 0);
+
+         if( pos >= len || seq[pos] != idx )
+            return FALSE;
+         ++pos;
+      }
+
+      if( pos > cliquestart && c > 0 )
+      {
+         if( pos >= len || seq[pos] != -1 )
+            return FALSE;
+         ++pos;
+      }
+   }
+
+   return pos == len;
+}
+#endif
+
 /** collect clique data on binary variables for variable set reduction and global bound implications */
 static
 void collectBinaryCliqueData(
@@ -860,7 +1133,9 @@ void collectBinaryCliqueData(
    int*                  implidx,            /**< array to store the variable indices (for upper bound 'nvars' is added
                                               *   to the index) which are implied
                                               */
-   int*                  nimplidx            /**< pointer to store the number of implied variables */
+   int*                  nimplidx,           /**< pointer to store the number of implied variables */
+   int*                  seq,                /**< cached clique neighborhood index sequence of the literal, or NULL */
+   int                   seqlen              /**< length of seq */
    )
 {
    SCIP_CLIQUE** cliques;
@@ -906,6 +1181,52 @@ void collectBinaryCliqueData(
          implidx[*nimplidx] = varidx;
          ++(*nimplidx);
       }
+   }
+
+   /* the same loop as below on the cached index sequence (see struct SCIP_ShrinkCache), -1 marks the end of a clique */
+   if( seq != NULL )
+   {
+      for( w = 0; w < seqlen; ++w )
+      {
+         idx = seq[w];
+
+         if( idx < 0 )
+            continue;
+
+         assert(idx < 2 * nvars);
+         assert(counts[idx] <= pos - nredvars + 1);
+
+         /* set variable 'var' with bound implies other set variable with corresponding set bound so we can remove the
+          * set variable 'var'; skip the rest of the clique
+          */
+         if( issetvar[idx] > 0 )
+         {
+            issetvar[varidx] = -1;
+
+            while( w + 1 < seqlen && seq[w + 1] >= 0 )
+               ++w;
+            continue;
+         }
+
+         /* update implication counter */
+         if( counts[idx] == pos - nredvars )
+         {
+            ++counts[idx];
+            *foundbin = MIN(*foundbin, idx);
+
+            if( counts[idx] == 1 )
+            {
+               assert(*ncountnonzeros < 2*nvars);
+               countnonzeros[*ncountnonzeros] = idx;
+               ++(*ncountnonzeros);
+            }
+
+            implidx[*nimplidx] = idx;
+            ++(*nimplidx);
+         }
+      }
+
+      return;
    }
 
    cliques = SCIPvarGetCliques(var, value);
@@ -992,8 +1313,9 @@ void collectBinaryCliqueData(
  *  Also, the both other implications and x3 >= 1 (in the given variable set) all imply exactly x3 >= 1, so we tighten
  *  the global lower bound of x3 to 1 and the set of variables gets redundant.
  */
-SCIP_RETCODE SCIPshrinkDisjunctiveVarSet(
+SCIP_RETCODE SCIPshrinkDisjunctiveVarSetCache(
    SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_SHRINKCACHE*     cache,              /**< clique neighborhood cache, or NULL */
    SCIP_VAR**            vars,               /**< variables array for which at least one must be fulfilled in the
                                               *   following bounds and boundtypes */
    SCIP_Real*            bounds,             /**< bounds array for which at least one must be fulfilled */
@@ -1082,6 +1404,11 @@ SCIP_RETCODE SCIPshrinkDisjunctiveVarSet(
    *glbinfeas = FALSE;
    ncountnonzeros = 0;
 
+   if( cache != NULL )
+   {
+      SCIP_CALL( shrinkCacheValidate(scip, cache) );
+   }
+
    maxcountnonzeros = (int)(2*nprobvars*CLEARRATIO); /*lint !e790*/
 
    /* initialize variable indices data */
@@ -1149,8 +1476,33 @@ SCIP_RETCODE SCIPshrinkDisjunctiveVarSet(
          /* collect clique data on binary variables */
          if( SCIPvarIsBinary(var) )
          {
+            int* seq = NULL;
+            int seqlen = 0;
+
+            if( cache != NULL )
+            {
+               SCIP_Bool cached = (cache->stamps[varidx] == cache->epoch);
+
+               if( cached )
+               {
+                  ++cache->nhits;
+                  assert(shrinkCacheCheck(cache, var, value, varidx, nprobvars));
+               }
+               else
+               {
+                  ++cache->nmisses;
+                  SCIP_CALL( shrinkCacheStore(scip, cache, var, value, varidx, nprobvars, &cached) );
+               }
+
+               if( cached )
+               {
+                  seq = &cache->entries[cache->starts[varidx]];
+                  seqlen = cache->lens[varidx];
+               }
+            }
+
             collectBinaryCliqueData(var, varidx, v, *nredvars, value, bounds, boundtypes, newbounds, counts, countnonzeros,
-               &ncountnonzeros, issetvar, nprobvars, &foundbin, implidx, &nimplidx);
+               &ncountnonzeros, issetvar, nprobvars, &foundbin, implidx, &nimplidx, seq, seqlen);
          }
       }
 
@@ -1425,6 +1777,33 @@ SCIP_RETCODE SCIPshrinkDisjunctiveVarSet(
    SCIPfreeBufferArray(scip, &newbounds);
    SCIPfreeCleanBufferArray(scip, &counts);
    SCIPfreeCleanBufferArray(scip, &issetvar);
+
+   return SCIP_OKAY;
+}
+
+/** try to reduce the necessary variable in a set of variables with corresponding bounds and boundtypes for which one
+ *  must be fulfilled, see SCIPshrinkDisjunctiveVarSetCache()
+ */
+SCIP_RETCODE SCIPshrinkDisjunctiveVarSet(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_VAR**            vars,               /**< variables array for which at least one must be fulfilled in the
+                                              *   following bounds and boundtypes */
+   SCIP_Real*            bounds,             /**< bounds array for which at least one must be fulfilled */
+   SCIP_Bool*            boundtypes,         /**< boundtypes array (TRUE == SCIP_BOUNDTYPE_UPPER, FALSE == SCIP_BOUNDTYPE_LOWER)
+                                              *   for which at least one must be fulfilled */
+   SCIP_Bool*            redundants,         /**< array which be filled and then indicate if a variable in the set is redundant */
+   int                   nvars,              /**< number of variables */
+   int*                  nredvars,           /**< pointer to store how many variables can be removed */
+   int*                  nglobalred,         /**< pointer to store number of global reductions on variable bounds found
+                                              *   through this set of variables */
+   SCIP_Bool*            setredundant,       /**< pointer to store if we found a global reduction on a variable which was part
+                                              *   of the given set of variables, this makes this disjunction redundant */
+   SCIP_Bool*            glbinfeas,          /**< pointer to store if global infeasibility was detected */
+   SCIP_Bool             fullshortening      /**< do we want to try the shortening procedure over the whole set (which might be expensive) */
+   )
+{
+   SCIP_CALL( SCIPshrinkDisjunctiveVarSetCache(scip, NULL, vars, bounds, boundtypes, redundants, nvars, nredvars,
+         nglobalred, setredundant, glbinfeas, fullshortening) );
 
    return SCIP_OKAY;
 }
