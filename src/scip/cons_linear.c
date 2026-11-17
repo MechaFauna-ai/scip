@@ -4954,12 +4954,20 @@ SCIP_RETCODE addConflictBounds(
                if( reasonisrhs == (vals[i] > 0.0) )
                {
                   /* rhs is reason and coeff is positive, or lhs is reason and coeff is negative -> lower bound */
+                  /* An active variable without local bound changes only contributes its global bound. */
+                  if( SCIPvarIsActive(vars[i]) && SCIPvarGetNBdchgInfosLb(vars[i]) == 0 )
+                     continue;
+
                   SCIP_CALL( SCIPaddConflictLb(scip, vars[i], bdchgidx) );
                   rescap -= vals[i] * (SCIPgetVarLbAtIndex(scip, vars[i], bdchgidx, FALSE) - SCIPvarGetLbGlobal(vars[i]));
                }
                else
                {
                   /* lhs is reason and coeff is positive, or rhs is reason and coeff is negative -> upper bound */
+                  /* An active variable without local bound changes only contributes its global bound. */
+                  if( SCIPvarIsActive(vars[i]) && SCIPvarGetNBdchgInfosUb(vars[i]) == 0 )
+                     continue;
+
                   SCIP_CALL( SCIPaddConflictUb(scip, vars[i], bdchgidx) );
                   rescap -= vals[i] * (SCIPgetVarUbAtIndex(scip, vars[i], bdchgidx, FALSE) - SCIPvarGetUbGlobal(vars[i]));
                }
