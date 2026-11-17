@@ -123,6 +123,8 @@ Performance improvements
   variables, which loads each variable only once; same order
 - the presolving loops over all logicor and setppc constraints and the logicor loop of the gate extraction presolver
   check the solving limits only every 100 constraints instead of before every constraint; same presolving
+- the propagation of setppc constraints loads the marked constraints and their data some positions ahead, since they
+  are often not in cache
 
 Interface changes
 -----------------
