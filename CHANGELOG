@@ -113,6 +113,8 @@ Performance improvements
   stabilizer subgroup from these instead of scanning all variables of the component for every permutation; same orbits
 - the primal heuristics loop checks the solving limits only after heuristics that were executed instead of after
   every heuristic, since checking them reads the clock; same heuristic calls
+- linear constraint presolving checks the solving limits only every 100 constraints in its loop over all constraints
+  instead of before every constraint, since checking them reads the clock; same presolving
 
 Interface changes
 -----------------
