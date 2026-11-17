@@ -118,6 +118,8 @@ Performance improvements
   instead of before every constraint, since checking them reads the clock; same presolving
 - logicor constraints sort their variables by index on an array of extracted indices instead of comparing the
   variables, which loads each variable only once; same order
+- the presolving loops over all logicor and setppc constraints and the logicor loop of the gate extraction presolver
+  check the solving limits only every 100 constraints instead of before every constraint; same presolving
 
 Interface changes
 -----------------
