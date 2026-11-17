@@ -8413,7 +8413,8 @@ SCIP_DECL_CONSPRESOL(consPresolSetppc)
    firstchange = INT_MAX;
    firstclique = INT_MAX;
    lastclique = -1;
-   for( c = 0; c < nconss && !SCIPisStopped(scip); ++c )
+   /* checking the limits reads the clock, which is expensive compared to processing a single constraint */
+   for( c = 0; c < nconss && (c % 100 != 0 || !SCIPisStopped(scip)); ++c )
    {
       SCIP_CONS* cons;
       SCIP_CONSDATA* consdata;

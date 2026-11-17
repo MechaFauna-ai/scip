@@ -1562,7 +1562,8 @@ SCIP_DECL_PRESOLEXEC(presolExecGateextraction)
       }
 
       /* check all (new) logicors against all collected set-packing/-partitioning constraints */
-      for( c = nlogicorconss - 1; c >= 0 && !SCIPisStopped(scip); --c )
+      /* checking the limits reads the clock, which is expensive compared to processing a single constraint */
+      for( c = nlogicorconss - 1; c >= 0 && (c % 100 != 0 || !SCIPisStopped(scip)); --c )
       {
          logicor = logicorconss[c];
          assert(logicor != NULL);
