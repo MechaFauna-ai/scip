@@ -44,6 +44,8 @@
  * #define SORTTPL_PTRCOMP                 ptrcomp method should be used for comparisons (optional)
  * #define SORTTPL_INDCOMP                 indcomp method should be used for comparisons (optional)
  * #define SORTTPL_BACKWARDS               should the array be sorted other way around
+ * #define SORTTPL_KEYCOMP(x,y)            fixed key comparator, without a callback parameter (optional)
+ * #define SORTTPL_SORTONLY                generate only the sorting method (optional)
  */
 #include "scip/def.h"
 #define SORTTPL_SHELLSORTMAX    25 /* maximal size for shell sort */
@@ -146,10 +148,18 @@
 #define SORTTPL_CMP(x,y) (indcomp(dataptr, (x), (y)))
 #endif
 #else
+#ifdef SORTTPL_KEYCOMP
+#ifdef SORTTPL_BACKWARDS
+#define SORTTPL_CMP(x,y) (-SORTTPL_KEYCOMP((x), (y)))
+#else
+#define SORTTPL_CMP(x,y) (SORTTPL_KEYCOMP((x), (y)))
+#endif
+#else
 #ifdef SORTTPL_BACKWARDS
 #define SORTTPL_CMP(x,y) ((y) - (x))
 #else
 #define SORTTPL_CMP(x,y) ((x) - (y))
+#endif
 #endif
 #endif
 #endif
@@ -635,6 +645,7 @@ void SORTTPL_NAME(SCIPsort, SORTTPL_NAMEEXT)
 }
 
 
+#ifndef SORTTPL_SORTONLY
 /** SCIPsortedvecInsert...(): adds an element to a sorted multi-vector
  *
  *  This method does not do any memory allocation! It assumes that the arrays are large enough
@@ -1115,7 +1126,11 @@ void SORTTPL_NAME(SCIPselect, SORTTPL_NAMEEXT)
    assert(pos == k);
 }
 
+#endif /* !SORTTPL_SORTONLY */
+
 /* undefine template parameters and local defines */
+#undef SORTTPL_KEYCOMP
+#undef SORTTPL_SORTONLY
 #undef SORTTPL_NAMEEXT
 #undef SORTTPL_KEYTYPE
 #undef SORTTPL_FIELD1TYPE

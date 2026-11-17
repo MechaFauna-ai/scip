@@ -5627,6 +5627,41 @@ void SCIPsort(
 #include "scip/sorttpl.c" /*lint !e451*/
 
 
+/** lexicographic comparison for the fixed-comparator key-pair sorts */
+static
+int compareSortKeypairs(
+   const SCIP_SORTKEYPAIR* first,             /**< first key pair */
+   const SCIP_SORTKEYPAIR* second             /**< second key pair */
+   )
+{
+   if( first->key1 < second->key1 )
+      return -1;
+   else if( first->key1 > second->key1 )
+      return +1;
+   else if( first->key2 < second->key2 )
+      return -1;
+   else if( first->key2 > second->key2 )
+      return +1;
+   else
+      return 0;
+}
+
+/* Public key-pair sorts use the standard algorithm with an inlinable fixed comparator. */
+#define SORTTPL_NAMEEXT     KeypairInt
+#define SORTTPL_KEYTYPE     SCIP_SORTKEYPAIR*
+#define SORTTPL_FIELD1TYPE  int
+#define SORTTPL_KEYCOMP(x,y) compareSortKeypairs((x), (y))
+#define SORTTPL_SORTONLY
+#include "scip/sorttpl.c" /*lint !e451*/
+
+#define SORTTPL_NAMEEXT     DownKeypairInt
+#define SORTTPL_KEYTYPE     SCIP_SORTKEYPAIR*
+#define SORTTPL_FIELD1TYPE  int
+#define SORTTPL_KEYCOMP(x,y) compareSortKeypairs((x), (y))
+#define SORTTPL_BACKWARDS
+#define SORTTPL_SORTONLY
+#include "scip/sorttpl.c" /*lint !e451*/
+
 /* SCIPsortPtrInt(), SCIPsortedvecInsert...(), SCIPsortedvecDelPos...(), SCIPsortedvecFind...() via sort template */
 #define SORTTPL_NAMEEXT     PtrInt
 #define SORTTPL_KEYTYPE     void*
