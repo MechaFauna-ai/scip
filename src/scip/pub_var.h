@@ -1269,6 +1269,23 @@ void SCIPvarMarkRelaxationOnly(
 #define SCIPvarGetImplTypes(var, fix)   (SCIPimplicsGetTypes((var)->implics, fix))
 #define SCIPvarGetImplBounds(var, fix)  (SCIPimplicsGetBounds((var)->implics, fix))
 #define SCIPvarGetImplIds(var, fix)     (SCIPimplicsGetIds((var)->implics, fix))
+/** optimized common-clique query, with each argument evaluated once */
+INLINE static
+SCIP_Bool SCIPvarsHaveCommonCliqueInline(
+   SCIP_VAR*             var1,               /**< first variable */
+   SCIP_Bool             value1,             /**< value of first variable */
+   SCIP_VAR*             var2,               /**< second variable */
+   SCIP_Bool             value2,             /**< value of second variable */
+   SCIP_Bool             regardimplics       /**< should the implication graph also be searched for a clique? */
+   )
+{
+   return (SCIPcliquelistsHaveCommonClique(var1->cliquelist, value1, var2->cliquelist, value2)
+      || (regardimplics && SCIPvarHasImplic(var1, value1, var2,
+            value2 ? SCIP_BOUNDTYPE_UPPER : SCIP_BOUNDTYPE_LOWER)));
+}
+#define SCIPvarsHaveCommonClique(var1, value1, var2, value2, regardimplics) \
+   SCIPvarsHaveCommonCliqueInline((var1), (value1), (var2), (value2), (regardimplics))
+
 #define SCIPvarGetNCliques(var, fix)    (SCIPcliquelistGetNCliques((var)->cliquelist, fix))
 #define SCIPvarGetCliques(var, fix)     (SCIPcliquelistGetCliques((var)->cliquelist, fix))
 #define SCIPvarGetLPSol(var)            ((var)->varstatus == SCIP_VARSTATUS_COLUMN ? SCIPcolGetPrimsol((var)->data.col) : SCIPvarGetLPSol_rec(var))

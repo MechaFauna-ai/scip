@@ -38,6 +38,7 @@ Performance improvements
 ------------------------
 
 - conflict bound insertion skips conversion and aggregation dispatch for loose and column variables
+- common clique queries inline the clique and implication dispatch in optimized builds
 - clique coloring handles covered, overlapping, or consecutive single color intervals without merging interval lists
 - the clique heuristic stops counting unfixed variables once a candidate cannot beat the current best clique,
   while still identifying completely fixed cliques
@@ -102,6 +103,8 @@ Performance improvements
 
 Interface changes
 -----------------
+
+- exported SCIPcliquelistsHaveCommonClique for optimized common-clique queries in shared-library clients
 
 ### Deleted and changed API methods
 
