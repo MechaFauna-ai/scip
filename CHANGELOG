@@ -125,6 +125,8 @@ Performance improvements
   check the solving limits only every 100 constraints instead of before every constraint; same presolving
 - the propagation of setppc constraints loads the marked constraints and their data some positions ahead, since they
   are often not in cache
+- processing the delayed updates of constraints loads the constraints some positions ahead, since they are often not
+  in cache
 
 Interface changes
 -----------------
