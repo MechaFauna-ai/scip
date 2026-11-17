@@ -37,6 +37,8 @@ Features
 Performance improvements
 ------------------------
 
+- store local-search constraint activities alongside their bounds
+
 - knapsack cover lifting and minimization use the fixed-comparator key-pair sort API, preserving the generic
   sort's exact permutation while avoiding indirect comparator calls
 - clique coloring maps adjacent graph nodes directly to their positions in the current subgraph

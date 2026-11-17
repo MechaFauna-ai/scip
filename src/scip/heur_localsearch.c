@@ -159,18 +159,18 @@ struct LS_Var
 };
 typedef struct LS_Var LS_VAR;
 
-/** constraint structure (static model data) */
+/** constraint sides, coefficients, and current activity */
 struct LS_Constraint
 {
    SCIP_Real             lhs;                /**< normalized left hand side, -infinity if single */
    SCIP_Real             rhs;                /**< normalized right hand side */
    SCIP_Real             mhs;                /**< normalized middle hand side, -infinity if single */
+   SCIP_Real             act;                /**< current activity of the solver for this model */
    LS_IDXCOEFF*          coeffs;             /**< normalized variable coefficients */
-   int                   ncoeffs;            /**< number of coefficients */
 };
 typedef struct LS_Constraint LS_CONSTRAINT;
 
-/** problem data (static model) */
+/** model data with current constraint activities */
 struct LS_Problem
 {
    LS_VAR*               vars;               /**< variables */
@@ -179,6 +179,7 @@ struct LS_Problem
    int                   nintvars;           /**< number of integral variables */
    int                   nvars;              /**< number of variables */
    LS_CONSTRAINT*        conss;              /**< regular constraints */
+   int*                  consncoeffs;        /**< per-constraint number of coefficients */
    int                   nconss;             /**< number of constraints */
    int                   consssize;          /**< constraint array size */
    int*                  objvaridxs;         /**< variable indices with nonzero obj coeff */
@@ -201,7 +202,6 @@ struct LS_Solver
    SCIP_Real             incumbentobjective; /**< current objective value */
    SCIP_Bool             objunsat;           /**< is the objective target unreached? */
    int                   objnmoves;          /**< objective moves since its last computation */
-   SCIP_Real*            act;                /**< per-constraint current activity */
    int*                  unsatidxs;          /**< violated constraint indices */
    int                   nunsat;             /**< number of violated constraints */
    int*                  satidxs;            /**< satisfied constraint indices */
@@ -285,10 +285,13 @@ SCIP_RETCODE lsProblemFree(
       for( i = prob->nconss - 1; i >= 0; --i )
       {
          if( prob->conss[i].coeffs != NULL )
-            SCIPfreeBlockMemoryArray(scip, &prob->conss[i].coeffs, prob->conss[i].ncoeffs);
+            SCIPfreeBlockMemoryArray(scip, &prob->conss[i].coeffs, prob->consncoeffs[i]);
       }
       SCIPfreeBlockMemoryArray(scip, &prob->conss, prob->consssize);
    }
+
+   if( prob->consncoeffs != NULL )
+      SCIPfreeBlockMemoryArray(scip, &prob->consncoeffs, prob->consssize);
 
    if( prob->vars != NULL )
    {
@@ -394,7 +397,7 @@ SCIP_RETCODE lsProblemAddConstraint(
    cons->lhs = lhs;
    cons->rhs = rhs;
    cons->mhs = !SCIPisInfinity(scip, -lhs) ? 0.5 * (lhs + rhs) : lhs;
-   cons->ncoeffs = consnvars;
+   problem->consncoeffs[problem->nconss] = consnvars;
    SCIP_CALL( SCIPallocBlockMemoryArray(scip, &cons->coeffs, consnvars) );
 
    for( i = 0; i < consnvars; ++i )
@@ -444,7 +447,7 @@ SCIP_RETCODE lsProblemFillReferences(
    {
       cons = problem->conss + i;
 
-      for( j = 0; j < cons->ncoeffs; ++j )
+      for( j = 0; j < problem->consncoeffs[i]; ++j )
       {
          varidx = cons->coeffs[j].idx;
          var = problem->vars + varidx;
@@ -564,12 +567,12 @@ void lsSolverRecomputeConstraint(
    LS_CONSTRAINT* cons = solver->problem->conss + constridx;
    int i;
 
-   solver->act[constridx] = 0.0;
+   cons->act = 0.0;
 
-   for( i = 0; i < cons->ncoeffs; ++i )
+   for( i = 0; i < solver->problem->consncoeffs[constridx]; ++i )
    {
       /**@todo use quad precision if necessary */
-      solver->act[constridx] += cons->coeffs[i].coeff * solver->incumbentassignment[cons->coeffs[i].idx];
+      cons->act += cons->coeffs[i].coeff * solver->incumbentassignment[cons->coeffs[i].idx];
    }
 
    solver->consnmoves[constridx] = 0;
@@ -585,8 +588,8 @@ void lsSolverUpdateConstraint(
 {
    LS_CONSTRAINT* cons = solver->problem->conss + constridx;
 
-   if( SCIPisFeasPositive(scip, 2.0 * (!SCIPisInfinity(scip, -cons->mhs) && solver->act[constridx] <= cons->mhs
-      ? cons->lhs - solver->act[constridx] : solver->act[constridx] - cons->rhs)) )
+   if( SCIPisFeasPositive(scip, 2.0 * (!SCIPisInfinity(scip, -cons->mhs) && cons->act <= cons->mhs
+      ? cons->lhs - cons->act : cons->act - cons->rhs)) )
    {
       if( solver->idxs[constridx] < 0 )
          lsSolverMakeUnsat(solver, constridx);
@@ -647,7 +650,6 @@ SCIP_RETCODE lsSolverCreate(
    SCIP_CALL( SCIPallocBlockMemoryArray(scip, &solver->incumbentassignment, nvars) );
 
    /* allocate per-constraint parallel arrays */
-   SCIP_CALL( SCIPallocBlockMemoryArray(scip, &solver->act, nconss) );
    SCIP_CALL( SCIPallocBlockMemoryArray(scip, &solver->unsatidxs, nconss) );
    SCIP_CALL( SCIPallocBlockMemoryArray(scip, &solver->satidxs, nconss) );
    SCIP_CALL( SCIPallocBlockMemoryArray(scip, &solver->idxs, nconss) );
@@ -805,7 +807,6 @@ SCIP_RETCODE lsSolverFree(
    SCIPfreeBlockMemoryArray(scip, &solver->idxs, nconss);
    SCIPfreeBlockMemoryArray(scip, &solver->satidxs, nconss);
    SCIPfreeBlockMemoryArray(scip, &solver->unsatidxs, nconss);
-   SCIPfreeBlockMemoryArray(scip, &solver->act, nconss);
    SCIPfreeBlockMemoryArray(scip, &solver->incumbentassignment, nvars);
 
    SCIPfreeBlockMemory(scip, solverptr);
@@ -886,22 +887,22 @@ void lsSolverApplyMove(
 
       if( !recompute )
       {
-         solver->act[constridx] += var->coeffs[i].coeff * (newvalue - oldvalue);
+         cons->act += var->coeffs[i].coeff * (newvalue - oldvalue);
          ++solver->effort;
 
          if( heurdata->recomputefreq >= 0
-            && ( !SCIPisInfinity(scip, -cons->mhs) && solver->act[constridx] <= cons->mhs
-            ? solver->act[constridx] < cons->lhs
-            && !SCIPisFeasNegative(scip, solver->act[constridx] - cons->lhs)
-            : solver->act[constridx] > cons->rhs
-            && !SCIPisFeasPositive(scip, solver->act[constridx] - cons->rhs) ) )
+            && ( !SCIPisInfinity(scip, -cons->mhs) && cons->act <= cons->mhs
+            ? cons->act < cons->lhs
+            && !SCIPisFeasNegative(scip, cons->act - cons->lhs)
+            : cons->act > cons->rhs
+            && !SCIPisFeasPositive(scip, cons->act - cons->rhs) ) )
             recompute = TRUE;
       }
 
       if( recompute )
       {
          lsSolverRecomputeConstraint(scip, solver, constridx);
-         solver->effort += cons->ncoeffs;
+         solver->effort += problem->consncoeffs[constridx];
       }
 
       lsSolverUpdateConstraint(scip, solver, constridx);
@@ -976,7 +977,7 @@ SCIP_Real getBreakMove(
    liftcoeff = var->coeffs[liftidx].coeff;
    assert(liftcoeff != 0.0); /*lint !e777*/
 
-   liftresidual = solver->act[var->coeffs[liftidx].idx] - value * liftcoeff;
+   liftresidual = liftcons->act - value * liftcoeff;
    lifttolhs = decrease == (liftcoeff >= 0.0);
    assert(!lifttolhs || !SCIPisInfinity(scip, -liftcons->lhs));
    liftvalue = ((lifttolhs ? liftcons->lhs - SCIPfeastol(scip) : liftcons->rhs + SCIPfeastol(scip)) - liftresidual) / liftcoeff;
@@ -1049,7 +1050,7 @@ SCIP_Real getTightMoveTerm(
    assert(coeff != 0.0); /*lint !e777*/
 
    value = solver->incumbentassignment[varidx];
-   residual = solver->act[constridx] - value * coeff;
+   residual = cons->act - value * coeff;
    movevalue = ((tolhs ? cons->lhs : cons->rhs) - residual) / coeff;
    decrease = tolhs == (coeff < 0.0);
 
@@ -1071,7 +1072,7 @@ SCIP_Real getTightMoveTerm(
       if( solver->idxs[constridx] < 0 )
          return movevalue;
 
-      moveactivity = solver->act[constridx];
+      moveactivity = cons->act;
    }
    /* get move activity */
    else
@@ -1118,7 +1119,7 @@ SCIP_Real getTightMove(
    LS_CONSTRAINT* cons = solver->problem->conss + constridx;
 
    assert(termidx >= 0);
-   assert(termidx < cons->ncoeffs);
+   assert(termidx < solver->problem->consncoeffs[constridx]);
 
    return getTightMoveTerm(scip, solver, constridx, cons->coeffs[termidx].idx, cons->coeffs[termidx].coeff, tolhs);
 }
@@ -1134,6 +1135,7 @@ SCIP_Longint getTightScore(
 {
    LS_PROBLEM* problem;
    LS_VAR* var;
+   LS_CONSTRAINT* cons;
    SCIP_Real value;
    SCIP_Real residual;
    SCIP_Real objresidual;
@@ -1203,11 +1205,12 @@ SCIP_Longint getTightScore(
    for( i = 0; i < var->ncoeffs; ++i )
    {
       constridx = var->coeffs[i].idx;
+      cons = problem->conss + constridx;
       coeff = var->coeffs[i].coeff;
-      act = solver->act[constridx];
-      lhs = problem->conss[constridx].lhs;
-      rhs = problem->conss[constridx].rhs;
-      mhs = problem->conss[constridx].mhs;
+      act = cons->act;
+      lhs = cons->lhs;
+      rhs = cons->rhs;
+      mhs = cons->mhs;
       residual = act - value * coeff;
       newact = newvalue * coeff + residual;
       previol = 2.0 * (!SCIPisInfinity(scip, -mhs) && act <= mhs ? lhs - act : act - rhs);
@@ -1329,9 +1332,9 @@ void collectConstraintNeighbors(
    /* move to nearest side if infeasible and farthest side if satisfied */
    cons = solver->problem->conss + constridx;
    tolhs = !SCIPisInfinity(scip, -cons->mhs)
-         && SCIPisLE(scip, solver->act[constridx], cons->mhs) == (solver->idxs[constridx] >= 0);
+         && SCIPisLE(scip, cons->act, cons->mhs) == (solver->idxs[constridx] >= 0);
 
-   for( i = 0; i < cons->ncoeffs; ++i )
+   for( i = 0; i < solver->problem->consncoeffs[constridx]; ++i )
    {
       varidx = cons->coeffs[i].idx;
       value = solver->incumbentassignment[varidx];
@@ -1352,7 +1355,7 @@ void collectConstraintNeighbors(
       ++solver->neighborsize;
    }
 
-   solver->effort += cons->ncoeffs;
+   solver->effort += solver->problem->consncoeffs[constridx];
 }
 
 /** collects neighbor candidates from objective terms */
@@ -1746,10 +1749,10 @@ SCIP_RETCODE lsSolverRandomTightMove(
    {
       constridx = solver->unsatidxs[SCIPrandomGetInt(heurdata->randnumgen, 0, solver->nunsat - 1)];
       cons = solver->problem->conss + constridx;
-      tolhs = !SCIPisInfinity(scip, -cons->mhs) && solver->act[constridx] <= cons->mhs;
+      tolhs = !SCIPisInfinity(scip, -cons->mhs) && cons->act <= cons->mhs;
 
       /* collect terms with soft tabu */
-      for( i = 0; i < cons->ncoeffs; ++i )
+      for( i = 0; i < solver->problem->consncoeffs[constridx]; ++i )
       {
          varidx = cons->coeffs[i].idx;
          value = solver->incumbentassignment[varidx];
@@ -1769,7 +1772,7 @@ SCIP_RETCODE lsSolverRandomTightMove(
          ++solver->neighborsize;
       }
 
-      solver->effort += cons->ncoeffs;
+      solver->effort += solver->problem->consncoeffs[constridx];
    }
 
    /* collect objective terms when the objective constraint is violated */
@@ -1964,7 +1967,7 @@ SCIP_RETCODE lsSolverLiftMove(
          cons = problem->conss + bestvar->coeffs[i].idx;
 
          /* invalidate other bounds */
-         for( j = 0; j < cons->ncoeffs; ++j )
+         for( j = 0; j < problem->consncoeffs[bestvar->coeffs[i].idx]; ++j )
          {
             varidx = cons->coeffs[j].idx;
 
@@ -2128,6 +2131,7 @@ SCIP_RETCODE extractProblemDataBeforePresolve(
    {
       problem->consssize = nconss;
       SCIP_CALL( SCIPallocBlockMemoryArray(scip, &problem->conss, problem->consssize) );
+      SCIP_CALL( SCIPallocBlockMemoryArray(scip, &problem->consncoeffs, problem->consssize) );
    }
 
    /* count variables for each type */
@@ -2292,6 +2296,7 @@ SCIP_RETCODE extractProblemData(
    {
       problem->consssize = nrows;
       SCIP_CALL( SCIPallocBlockMemoryArray(scip, &problem->conss, problem->consssize) );
+      SCIP_CALL( SCIPallocBlockMemoryArray(scip, &problem->consncoeffs, problem->consssize) );
    }
 
    /* count variables for each type */
@@ -2504,7 +2509,7 @@ SCIP_RETCODE lsCheckTermination(
                {
                   lsSolverRecomputeConstraint(scip, solver, i);
                   lsSolverUpdateConstraint(scip, solver, i);
-                  solver->effort += problem->conss[i].ncoeffs;
+                  solver->effort += problem->consncoeffs[i];
                }
             }
 
