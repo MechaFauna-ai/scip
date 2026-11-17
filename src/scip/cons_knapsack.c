@@ -7491,8 +7491,9 @@ SCIP_RETCODE propagateCons(
          /* allocate temporary memory and initialize it */
          SCIP_CALL( SCIPduplicateBufferArray(scip, &myvars, consdata->vars, nvars) );
          SCIP_CALL( SCIPduplicateBufferArray(scip, &myweights, consdata->weights, nvars) ) ;
-         SCIP_CALL( SCIPallocBufferArray(scip, &cliquestartposs, nnegcliques + 1) );
-         SCIP_CALL( SCIPallocBufferArray(scip, &cliqueendposs, nnegcliques) );
+         /* the start and end positions of the cliques share one buffer to save an allocation */
+         SCIP_CALL( SCIPallocBufferArray(scip, &cliquestartposs, 2 * nnegcliques + 1) );
+         cliqueendposs = &cliquestartposs[nnegcliques + 1];
          SCIP_CALL( SCIPallocBufferArray(scip, &secondmaxweights, nnegcliques) );
          BMSclearMemoryArray(secondmaxweights, nnegcliques);
 
@@ -7751,7 +7752,6 @@ SCIP_RETCODE propagateCons(
             }
          }
          SCIPfreeBufferArray(scip, &secondmaxweights);
-         SCIPfreeBufferArray(scip, &cliqueendposs);
          SCIPfreeBufferArray(scip, &cliquestartposs);
          SCIPfreeBufferArray(scip, &myweights);
          SCIPfreeBufferArray(scip, &myvars);
