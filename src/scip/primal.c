@@ -1842,6 +1842,8 @@ SCIP_RETCODE checkNewIncumbentOrig(
    SCIP_Bool*            feasible            /**< pointer to store whether the solution is feasible */
    )
 {
+   int v;
+
    assert(feasible != NULL);
    assert(*feasible);
 
@@ -1853,6 +1855,18 @@ SCIP_RETCODE checkNewIncumbentOrig(
    if( insertpos != 0 || !set->misc_checkincumbentorig || set->exact_enable || SCIPsolIsOriginal(sol)
       || set->nactivebenders > 0 )
       return SCIP_OKAY;
+
+   /* skip solutions with an infinite, unknown, or invalid value of an original variable: the activity of an original
+    * constraint can then be invalid (infinite contributions of opposite sign), which the constraint handlers do not
+    * expect for solutions; such solutions were accepted by the check in the transformed space
+    */
+   for( v = 0; v < SCIPprobGetNVars(origprob); ++v )
+   {
+      SCIP_Real val = SCIPsolGetVal(sol, set, stat, SCIPprobGetVars(origprob)[v]);
+
+      if( val == SCIP_UNKNOWN || val == SCIP_INVALID || SCIPsetIsInfinity(set, REALABS(val)) ) /*lint !e777*/
+         return SCIP_OKAY;
+   }
 
    /* same checks as for the best solution at the end of the solve: bounds, integrality, and all original constraints
     * except modifiable ones
