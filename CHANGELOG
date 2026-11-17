@@ -43,6 +43,7 @@ Performance improvements
   separation, and LNS instead of default, default with another seed, and two feasibility emphasis solvers); runs with
   ten or more threads use the same configurations as before
 - optimized common clique queries skip intersection searches when either selected clique list is empty
+- dense clique table construction reuses the graph node mapping instead of searching the graph for each entry
 - MIR variable-bound scans determine the current LP or pseudo solution once per scan
 - MIR variable-bound scans compute the section eligibility cutoff once per scan
 - optimized builds read the current solver stage directly in the internal settings accessor
