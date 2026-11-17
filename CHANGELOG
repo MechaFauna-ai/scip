@@ -389,6 +389,10 @@ Fixed bugs
   the gap, or because a solver's own bounds met below the shared cutoff bound, reported the status of the interrupted
   winner (unknown) and its weaker dual bound; such a solver now reports optimal (or infeasible below the cutoff) at its
   synchronization, and the main SCIP derives the final status and dual bound from the global concurrent information
+- in deterministic concurrent solving the winner was read only from the last synchronization completed by all solvers,
+  which the solvers stopping after the first terminal status never complete, so an interrupted solver's status
+  (unknown) was reported; with the concurrent solution pool disabled, a winner that was infeasible below the cutoff
+  bound shared by another solver was reported as infeasible although the main SCIP holds that solution
 - skip the additional original-space incumbent check while Benders decompositions are active: master solutions can
   carry infinite values of the free Benders auxiliary variables (e.g. in LNS sub-SCIPs with lnscheck off), which made
   the original auxiliary variable constraint activity invalid and aborted debug runs
