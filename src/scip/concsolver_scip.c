@@ -76,6 +76,17 @@
 /** number of configurations in the built-in parameter portfolio */
 #define NPARAMPORTFOLIOCONFIGS 10
 
+/** portfolio configuration of the first NPARAMPORTFOLIOCONFIGS concurrent solvers
+ *
+ *  Runs with fewer threads than configurations use a prefix of this order, so the configurations that complement the
+ *  default settings best come first: intensified separation and strong branching (9), no separation with fast
+ *  presolving (4) and LNS heuristics (6). A second default worker that differs only by its seed (1) and the
+ *  feasibility emphasis workers (2, 3), which the identity order selected for 4 threads, come later. Solvers beyond
+ *  the portfolio size get configuration i % NPARAMPORTFOLIOCONFIGS, so runs with NPARAMPORTFOLIOCONFIGS threads or
+ *  more use the same configurations as before.
+ */
+static const int paramportfolioorder[NPARAMPORTFOLIOCONFIGS] = { 0, 9, 4, 6, 1, 2, 7, 5, 8, 3 };
+
 /*
  * Data structures
  */
@@ -755,7 +766,8 @@ SCIP_DECL_CONCSOLVERCREATEINST(concsolverScipCreateInstance)
          int config;
          int nfixedparams;
 
-         config = SCIPconcsolverGetIdx(concsolver) % NPARAMPORTFOLIOCONFIGS;
+         config = SCIPconcsolverGetIdx(concsolver);
+         config = config < NPARAMPORTFOLIOCONFIGS ? paramportfolioorder[config] : config % NPARAMPORTFOLIOCONFIGS;
 
          SCIPverbMessage(scip, SCIP_VERBLEVEL_HIGH, NULL, "applying portfolio configuration <%d> to concurrent solver <%s>\n",
             config, SCIPconcsolverGetName(concsolver));
