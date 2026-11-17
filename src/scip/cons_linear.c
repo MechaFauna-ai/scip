@@ -13580,7 +13580,12 @@ SCIP_RETCODE preprocessConstraintPairs(
 
          /* test, if variable appears in only one or in both constraints */
          if( v0 < consdata0->nvars && v1 < consdata1->nvars )
-            varcmp = SCIPvarCompare(consdata0->vars[v0], consdata1->vars[v1]);
+         {
+            int index0 = SCIPvarGetIndex(consdata0->vars[v0]);
+            int index1 = SCIPvarGetIndex(consdata1->vars[v1]);
+
+            varcmp = (index0 > index1) - (index0 < index1);
+         }
          else if( v0 < consdata0->nvars )
             varcmp = -1;
          else
