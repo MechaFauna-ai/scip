@@ -164,8 +164,8 @@ int getCliqueUnfixedVars(
       {
          ++nunfixed;
 
-         /* A positive count that cannot beat the current best is sufficient.  Keep scanning all-fixed
-          * cliques so that the caller can still mark them as propagated.
+         /* a positive count that cannot beat the current best is sufficient; keep scanning all-fixed cliques so that
+          * the caller can still mark them as propagated
           */
          if( nunfixed + (ncliquevars - v - 1) <= minsize )
             break;
