@@ -59,7 +59,6 @@
 #include "scip/scip_solvingstats.h"
 #include "scip/scip_timing.h"
 #include "scip/scip_tree.h"
-#include "scip/struct_var.h"
 
 
 #define HEUR_NAME             "locks"
@@ -188,6 +187,69 @@ SCIP_DECL_HEUREXIT(heurExitLocks) /*lint --e{715}*/
    return SCIP_OKAY;
 }
 
+/** considers one variable in the lock-score scan; returns whether the known best score was reached */
+static INLINE
+SCIP_Bool updateBestLockCandidate(
+   SCIP_VAR**            sortvars,           /**< sorted variable array */
+   int*                  nuplocks,           /**< up-lock counts */
+   int*                  ndownlocks,         /**< down-lock counts */
+   int*                  varpos,             /**< optional map from problem indices to array positions */
+   int                   i,                  /**< candidate position */
+   int                   lastbestscore,      /**< upper bound on the lock score */
+   int*                  frontpos,           /**< first position not moved to the fixed prefix */
+   int*                  bestpos,            /**< position of the best variable */
+   int*                  bestscore           /**< best lock score */
+   )
+{
+   SCIP_VAR* var;
+   int v;
+   int score;
+
+   var = sortvars[i];
+   v = *frontpos;
+
+   /* variable is already fixed; move it to the front and increment v to ignore it */
+   if( SCIPvarGetLbLocal(var) > 0.5 || SCIPvarGetUbLocal(var) < 0.5 )
+   {
+      int locks;
+
+      sortvars[i] = sortvars[v];
+      sortvars[v] = var;
+
+      locks = nuplocks[i];
+      nuplocks[i] = nuplocks[v];
+      nuplocks[v] = locks;
+
+      locks = ndownlocks[i];
+      ndownlocks[i] = ndownlocks[v];
+      ndownlocks[v] = locks;
+
+      if( varpos != NULL )
+      {
+         varpos[SCIPvarGetProbindex(sortvars[i])] = i;
+         varpos[SCIPvarGetProbindex(sortvars[v])] = v;
+      }
+
+      if( *bestpos == v )
+         *bestpos = i;
+
+      *frontpos = v + 1;
+      return FALSE;
+   }
+
+   score = nuplocks[i] + ndownlocks[i];
+   assert(score <= lastbestscore);
+
+   if( score > *bestscore )
+   {
+      *bestscore = score;
+      *bestpos = i;
+      return score == lastbestscore;
+   }
+
+   return FALSE;
+}
+
 /** apply fix-and-propagate scheme based on variable locks
  *
  *  @note probing mode of SCIP needs to be enabled before
@@ -233,7 +295,7 @@ SCIP_RETCODE SCIPapplyLockFixings(
    int bestpos;
    int lastbestscore;
    int bestscore;
-   int score;
+   int prefetchend;
    int v;
    int r;
    int i;
@@ -267,6 +329,11 @@ SCIP_RETCODE SCIPapplyLockFixings(
    SCIPdebugMsg(scip, "%d constraints: %d logicor, updatelocks=%u\n", SCIPgetNConss(scip), SCIPconshdlrGetNCheckConss(SCIPfindConshdlr(scip, "logicor")), updatelocks);
 
    SCIP_CALL( SCIPgetVarsData(scip, &vars, &nvars, &nbinvars, NULL, NULL, NULL) );
+#if defined(__GNUC__) || defined(__clang__)
+   prefetchend = nbinvars >= 100 ? nbinvars - 16 : 0;
+#else
+   prefetchend = 0;
+#endif
    assert(vars != NULL);
 
    /* allocate memory */
@@ -331,54 +398,21 @@ SCIP_RETCODE SCIPapplyLockFixings(
       /* get best variable */
       if( bestscore < lastbestscore )
       {
-         for( i = v + 1; i < nbinvars; ++i )
+         /* Split the scan so size and look-ahead tests stay out of the prefetching loop. */
+         for( i = v + 1; i < prefetchend; ++i )
          {
-#if defined(__GNUC__) || defined(__clang__)
-            /* Overlap scattered local-bound loads when scanning a long variable array. */
-            if( nbinvars >= 100 && i < nbinvars - 16 )
-               __builtin_prefetch(&sortvars[i + 16]->locdom);
-#endif
-            var = sortvars[i];
+            SCIPvarPrefetch(sortvars[i + 16]);
+            if( updateBestLockCandidate(sortvars, nuplocks, ndownlocks, varpos, i, lastbestscore,
+                  &v, &bestpos, &bestscore) )
+               break;
+         }
 
-            /* variable is already fixed; move it to the front and increment v to ignore it */
-            if( SCIPvarGetLbLocal(var) > 0.5 || SCIPvarGetUbLocal(var) < 0.5 )
+         if( bestscore < lastbestscore )
+         {
+            for( ; i < nbinvars; ++i )
             {
-               int locks;
-
-               sortvars[i] = sortvars[v];
-               sortvars[v] = var;
-
-               locks = nuplocks[i];
-               nuplocks[i] = nuplocks[v];
-               nuplocks[v] = locks;
-
-               locks = ndownlocks[i];
-               ndownlocks[i] = ndownlocks[v];
-               ndownlocks[v] = locks;
-
-               if( varpos != NULL )
-               {
-                  varpos[SCIPvarGetProbindex(sortvars[i])] = i;
-                  varpos[SCIPvarGetProbindex(sortvars[v])] = v;
-               }
-
-               if( bestpos == v )
-                  bestpos = i;
-
-               ++v;
-
-               continue;
-            }
-
-            score = nuplocks[i] + ndownlocks[i];
-            assert(score <= lastbestscore);
-
-            if( score > bestscore )
-            {
-               bestscore = score;
-               bestpos = i;
-
-               if( bestscore == lastbestscore )
+               if( updateBestLockCandidate(sortvars, nuplocks, ndownlocks, varpos, i, lastbestscore,
+                     &v, &bestpos, &bestscore) )
                   break;
             }
          }
