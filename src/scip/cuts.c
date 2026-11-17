@@ -4167,6 +4167,46 @@ int varSection(
    return 5;
 }
 
+/** returns the first problem index in the section containing a variable
+ *
+ *  The current sections are contiguous type blocks in reverse problem-index order. An active variable is in a
+ *  strictly greater section exactly when its problem index is smaller than this cutoff.
+ */
+static
+int varSectionStart(
+   MIR_DATA*             data,               /**< The MIR separation data */
+   int                   probindex           /**< Problem index of a variable */
+   )
+{
+   int limit;
+
+   assert(data != NULL);
+
+   limit = data->nvars - data->ncontvars;
+   if( probindex >= limit )
+      return limit;
+
+   limit -= data->ncontimplvars;
+   if( probindex >= limit )
+      return limit;
+
+   limit -= data->nintimplvars;
+   if( probindex >= limit )
+      return limit;
+
+   limit -= data->nbinimplvars;
+   if( probindex >= limit )
+      return limit;
+
+   limit -= data->nintvars;
+   if( probindex >= limit )
+      return limit;
+
+   assert(limit == data->nbinvars);
+
+   return 0;
+}
+
 /** finds the best lower bound of the variable to use for MIR transformation.
  *
  *  Currently, we use a slightly different function for the exact MIR cuts than for the normal MIR cuts due to differences
@@ -4676,7 +4716,7 @@ SCIP_RETCODE findMIRBestLb(
       {
          SCIP_Real bestvlb = SCIP_REAL_MIN;
          int bestvlbtype = -1;
-         int boundedsection = varSection(data, SCIPvarGetProbindex(var));
+         int sectionstart = varSectionStart(data, SCIPvarGetProbindex(var));
 
          SCIP_VAR** vlbvars;
          SCIP_Real* vlbcoefs;
@@ -4693,7 +4733,7 @@ SCIP_RETCODE findMIRBestLb(
             /* For now, we only allow variable bounds from sections that are strictly greater to prevent cyclic usage.*/
             /** @todo: We don't use the caching mechanism of SCIPvarGetClosestVLB() because the cached variable bound
              * may be illegal. Building a local cache here may be worth it. */
-            if( SCIPvarIsActive(vlbvars[i]) && boundedsection < varSection(data, SCIPvarGetProbindex(vlbvars[i])) &&
+            if( SCIPvarIsActive(vlbvars[i]) && SCIPvarGetProbindex(vlbvars[i]) < sectionstart &&
                   (usevbds == 2 || SCIPvarIsBinary(vlbvars[i])) )
             {
                SCIP_Real vlbsol;
@@ -4765,7 +4805,7 @@ SCIP_RETCODE findMIRBestUb(
       {
          SCIP_Real bestvub = SCIP_REAL_MAX;
          int bestvubtype = -1;
-         int boundedsection = varSection(data, SCIPvarGetProbindex(var));
+         int sectionstart = varSectionStart(data, SCIPvarGetProbindex(var));
 
          SCIP_VAR** vubvars;
          SCIP_Real* vubcoefs;
@@ -4782,7 +4822,7 @@ SCIP_RETCODE findMIRBestUb(
             /* For now, we only allow variable bounds from sections that are strictly greater to prevent cyclic usage.*/
             /** @todo: We don't use the caching mechanism of SCIPvarGetClosestVLB() because the cached variable bound
              * may be illegal. Building a local cache here may be worth it. */
-            if( SCIPvarIsActive(vubvars[i]) && boundedsection < varSection(data, SCIPvarGetProbindex(vubvars[i])) &&
+            if( SCIPvarIsActive(vubvars[i]) && SCIPvarGetProbindex(vubvars[i]) < sectionstart &&
                (usevbds == 2 || SCIPvarIsBinary(vubvars[i])) )
             {
                SCIP_Real vubsol;
