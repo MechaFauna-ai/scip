@@ -17276,6 +17276,8 @@ SCIP_RETCODE SCIPlpWriteMip(
 #undef SCIProwGetNLPNonz
 #undef SCIProwGetCols
 #undef SCIProwGetVals
+#undef SCIProwGetColIndices
+#undef SCIProwHasSortedUnlinkedCols
 #undef SCIProwGetConstant
 #undef SCIProwGetNorm
 #undef SCIProwGetSumNorm
@@ -17649,6 +17651,31 @@ SCIP_Real* SCIProwGetVals(
    assert(row != NULL);
 
    return row->vals;
+}
+
+/** gets array with the indices of the columns of the nonzero entries, in the same order as SCIProwGetCols() */
+int* SCIProwGetColIndices(
+   SCIP_ROW*             row                 /**< LP row */
+   )
+{
+   assert(row != NULL);
+
+   return row->cols_index;
+}
+
+/** returns whether the row is not linked to any of its columns, which is the case for a cut before it is added to the
+ *  LP, and its columns are sorted by non-decreasing index (see SCIProwSort())
+ *
+ *  For such rows, SCIProwGetScalarProduct() sums the products of the common columns that are in the LP in increasing
+ *  order of the column index.
+ */
+SCIP_Bool SCIProwHasSortedUnlinkedCols(
+   SCIP_ROW*             row                 /**< LP row */
+   )
+{
+   assert(row != NULL);
+
+   return row->nunlinked == row->len && row->nlpcols == 0 && row->nonlpcolssorted;
 }
 
 /** gets constant shift of row */

@@ -156,6 +156,9 @@ Interface changes
 - SCIPsortKeypairInt() and SCIPsortDownKeypairInt() sort pointers to SCIP_SORTKEYPAIR lexicographically and
   apply the same permutation to a joint integer array; declared in the installed pub_misc_sort.h header
 
+- added SCIProwGetColIndices() to get the indices of the columns of a row, in the same order as SCIProwGetCols(), and
+  SCIProwHasSortedUnlinkedCols() to check whether a row is not linked to any of its columns (as a cut before it is
+  added to the LP) and its columns are sorted; the hybrid cut selector uses them instead of the internal row data
 - exported SCIPcliquelistsHaveCommonClique() in pub_implics.h for optimized common-clique queries in shared-library clients
 
 - added SCIPvarPrefetch() to hint the processor to load the data of a variable that is accessed when querying its
