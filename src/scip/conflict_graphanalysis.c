@@ -4226,31 +4226,34 @@ SCIP_RETCODE SCIPconflictAddBound(
    assert(stat != NULL);
    assert(var != NULL);
 
-   /* convert bound to active problem variable */
-   SCIP_CALL( convertToActiveVar(&var, set, &boundtype, NULL) );
-
-   /* we can ignore fixed variables */
-   if( SCIPvarGetStatus(var) == SCIP_VARSTATUS_FIXED )
-      return SCIP_OKAY;
-
-   /* if the variable is multi-aggregated, add the bounds of all aggregation variables */
-   if( SCIPvarGetStatus(var) == SCIP_VARSTATUS_MULTAGGR )
+   if( SCIPvarGetStatus(var) != SCIP_VARSTATUS_LOOSE && SCIPvarGetStatus(var) != SCIP_VARSTATUS_COLUMN )
    {
-      SCIP_VAR** vars;
-      SCIP_Real* scalars;
-      int nvars;
-      int i;
+      /* convert bound to active problem variable */
+      SCIP_CALL( convertToActiveVar(&var, set, &boundtype, NULL) );
 
-      vars = SCIPvarGetMultaggrVars(var);
-      scalars = SCIPvarGetMultaggrScalars(var);
-      nvars = SCIPvarGetMultaggrNVars(var);
-      for( i = 0; i < nvars; ++i )
+      /* we can ignore fixed variables */
+      if( SCIPvarGetStatus(var) == SCIP_VARSTATUS_FIXED )
+         return SCIP_OKAY;
+
+      /* if the variable is multi-aggregated, add the bounds of all aggregation variables */
+      if( SCIPvarGetStatus(var) == SCIP_VARSTATUS_MULTAGGR )
       {
-         SCIP_CALL( SCIPconflictAddBound(conflict, blkmem, set, stat, vars[i],
-               (scalars[i] < 0.0 ? SCIPboundtypeOpposite(boundtype) : boundtype), bdchgidx) );
-      }
+         SCIP_VAR** vars;
+         SCIP_Real* scalars;
+         int nvars;
+         int i;
 
-      return SCIP_OKAY;
+         vars = SCIPvarGetMultaggrVars(var);
+         scalars = SCIPvarGetMultaggrScalars(var);
+         nvars = SCIPvarGetMultaggrNVars(var);
+         for( i = 0; i < nvars; ++i )
+         {
+            SCIP_CALL( SCIPconflictAddBound(conflict, blkmem, set, stat, vars[i],
+                  (scalars[i] < 0.0 ? SCIPboundtypeOpposite(boundtype) : boundtype), bdchgidx) );
+         }
+
+         return SCIP_OKAY;
+      }
    }
    assert(SCIPvarIsActive(var));
 
