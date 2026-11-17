@@ -36,6 +36,7 @@
 
 #include "blockmemshell/memory.h"
 #include "scip/def.h"
+#include "scip/pub_implics.h"
 #include "scip/type_branch.h"
 #include "scip/type_event.h"
 #include "scip/type_implics.h"
@@ -49,7 +50,6 @@
 #include "scip/type_var.h"
 
 #ifdef NDEBUG
-#include "scip/pub_implics.h"
 #include "scip/struct_implics.h"
 #endif
 
@@ -290,17 +290,6 @@ SCIP_RETCODE SCIPcliquelistDel(
    BMS_BLKMEM*           blkmem,             /**< block memory */
    SCIP_Bool             value,              /**< value of the variable for which the clique list should be reduced */
    SCIP_CLIQUE*          clique              /**< clique that should be deleted from the clique list */
-   );
-
-/** returns whether the given clique lists have a non-empty intersection, i.e. whether there is a clique that appears
- *  in both lists
- */
-SCIP_EXPORT
-SCIP_Bool SCIPcliquelistsHaveCommonClique(
-   SCIP_CLIQUELIST*      cliquelist1,        /**< first clique list data structure */
-   SCIP_Bool             value1,             /**< value of first variable */
-   SCIP_CLIQUELIST*      cliquelist2,        /**< second clique list data structure */
-   SCIP_Bool             value2              /**< value of second variable */
    );
 
 /** removes all listed entries from the cliques */
