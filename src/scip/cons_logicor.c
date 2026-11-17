@@ -1903,6 +1903,49 @@ SCIP_RETCODE enforcePseudo(
    return SCIP_OKAY;
 }
 
+/** maximal number of variables for which the sorting keys are stored on the stack */
+#define MAXSTACKSORTKEYS 1024
+
+/** sorts variables by non-decreasing index
+ *
+ *  The indices are copied into a key array first, such that each variable is accessed only once instead of in each
+ *  comparison. Since the indices are unique, the result is identical to sorting with SCIPvarComp().
+ */
+static
+void sortVarsByIndex(
+   SCIP_VAR**            vars,               /**< variables to sort */
+   int                   nvars               /**< number of variables */
+   )
+{
+   int stackkeys[MAXSTACKSORTKEYS];
+   int* keys;
+   int v;
+
+   assert(vars != NULL || nvars == 0);
+
+   if( nvars <= MAXSTACKSORTKEYS )
+      keys = stackkeys;
+   else
+   {
+      BMSallocMemoryArray(&keys, nvars);
+
+      /* if no memory is available for the keys, sort by comparing the variables directly */
+      if( keys == NULL )
+      {
+         SCIPsortPtr((void**)vars, SCIPvarComp, nvars);
+         return;
+      }
+   }
+
+   for( v = 0; v < nvars; ++v )
+      keys[v] = SCIPvarGetIndex(vars[v]);
+
+   SCIPsortIntPtr(keys, (void**)vars, nvars);
+
+   if( keys != stackkeys )
+      BMSfreeMemoryArray(&keys);
+}
+
 /** sorts logicor constraint's variables by non-decreasing variable index */
 static
 void consdataSort(
@@ -1938,7 +1981,7 @@ void consdataSort(
          assert(var1 != NULL || var2 == NULL);
 
          /* sort variables after index */
-         SCIPsortPtr((void**)consdata->vars, SCIPvarComp, consdata->nvars);
+         sortVarsByIndex(consdata->vars, consdata->nvars);
          consdata->sorted = TRUE;
 
          /* correct watched variables */
