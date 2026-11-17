@@ -268,6 +268,7 @@ SCIP_RETCODE SCIPprimalHeuristics(
    )
 {  /*lint --e{715}*/
    SCIP_RESULT result;
+   SCIP_Bool executed;
    SCIP_Longint oldnbestsolsfound;
    SCIP_Real lowerbound;
    int ndelayedheurs;
@@ -402,7 +403,7 @@ SCIP_RETCODE SCIPprimalHeuristics(
 #endif
 
       SCIP_CALL( SCIPheurExec(set->heurs[h], set, primal, depth, lpstateforkdepth, heurtiming, nodeinfeasible,
-            &ndelayedheurs, &result) );
+            &ndelayedheurs, &result, &executed) );
 
 #ifndef NDEBUG
       if( BMSgetNUsedBufferMemory(SCIPbuffer(set->scip)) > nusedbuffer )
@@ -413,9 +414,12 @@ SCIP_RETCODE SCIPprimalHeuristics(
 #endif
 
       /* if the new solution cuts off the current node due to a new primal solution (via the cutoff bound) interrupt
-       * calling the remaining heuristics
+       * calling the remaining heuristics; the limits only need to be checked again if the heuristic was executed,
+       * because they were checked before the loop and after each executed heuristic, and checking them involves
+       * reading the clock
        */
-      if( SCIPsolveIsStopped(set, stat, FALSE) || ( result == SCIP_FOUNDSOL && SCIPsetIsGE(set, lowerbound, primal->cutoffbound) ) )
+      if( (executed && SCIPsolveIsStopped(set, stat, FALSE))
+         || ( result == SCIP_FOUNDSOL && SCIPsetIsGE(set, lowerbound, primal->cutoffbound) ) )
          break;
 
       /* check if the problem is proven to be unbounded, currently this happens only in reoptimization */

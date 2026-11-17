@@ -1270,7 +1270,9 @@ SCIP_RETCODE SCIPheurExec(
    SCIP_HEURTIMING       heurtiming,         /**< current point in the node solving process */
    SCIP_Bool             nodeinfeasible,     /**< was the current node already detected to be infeasible? */
    int*                  ndelayedheurs,      /**< pointer to count the number of delayed heuristics */
-   SCIP_RESULT*          result              /**< pointer to store the result of the callback method */
+   SCIP_RESULT*          result,             /**< pointer to store the result of the callback method */
+   SCIP_Bool*            executed            /**< pointer to store whether the execution method of the heuristic was
+                                              *   called, or NULL */
    )
 {
    SCIP_Bool execute;
@@ -1289,6 +1291,9 @@ SCIP_RETCODE SCIPheurExec(
    assert(result != NULL);
 
    *result = SCIP_DIDNOTRUN;
+
+   if( executed != NULL )
+      *executed = FALSE;
 
    if( set->exact_enable && !heur->exact )
       return SCIP_OKAY;
@@ -1317,6 +1322,9 @@ SCIP_RETCODE SCIPheurExec(
 
       /* call external method */
       SCIP_CALL( heur->heurexec(set->scip, heur, heurtiming, nodeinfeasible, result) );
+
+      if( executed != NULL )
+         *executed = TRUE;
 
       /* stop timing */
       SCIPclockStop(heur->heurclock, set);
