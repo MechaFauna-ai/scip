@@ -359,6 +359,7 @@ static
 SCIP_RETCODE tcliquegraphConstructCliqueTable(
    SCIP*                 scip,               /**< SCIP data structure */
    TCLIQUE_GRAPH*        tcliquegraph,       /**< tclique graph data */
+   int**                 cliquegraphidx,     /**< mapping of binary problem variable/value pairs to graph nodes */
    SCIP_Real             cliquetablemem,     /**< maximal memory size of dense clique table (in kb) */
    SCIP_Real             cliquedensity       /**< minimal density of cliques to store as dense table */
    )
@@ -424,18 +425,17 @@ SCIP_RETCODE tcliquegraphConstructCliqueTable(
       /* get the node numbers of the variables */
       for( u = 0; u < nvars && !SCIPisStopped(scip); ++u )
       {
-         SCIP_VAR* var;
+         int probindex;
 
          /* implicit integer and integer variables are currently not present in the constructed tclique graph */
          if( SCIPvarGetType(vars[u]) != SCIP_VARTYPE_BINARY || SCIPvarIsImpliedIntegral(vars[u]) )
             continue;
 
-         var = (vals[u] ? vars[u] : SCIPvarGetNegatedVar(vars[u]));
-         assert(var != NULL); /* var must exist even if negated, since it is stored in the tcliquegraph */
-         for( v = 0; v < tcliquegraph->nnodes && var != tcliquegraph->vars[v]; ++v )
-         {}
-         assert(v < tcliquegraph->nnodes);
-         varids[u] = v;
+         probindex = SCIPvarGetProbindex(vars[u]);
+         assert(0 <= probindex && probindex < SCIPgetNBinVars(scip));
+         varids[u] = cliquegraphidx[vals[u] ? 1 : 0][probindex];
+         assert(0 <= varids[u] && varids[u] < tcliquegraph->nnodes);
+         assert(tcliquegraph->vars[varids[u]] == (vals[u] ? vars[u] : SCIPvarGetNegatedVar(vars[u])));
       }
 
       /* flag the edges in the incidence matrix (excluding diagonal entries) */
@@ -592,7 +592,7 @@ SCIP_RETCODE loadTcliquegraph(
    if( sepadata->tcliquegraph != NULL )
    {
       /* construct the dense clique table */
-      SCIP_CALL( tcliquegraphConstructCliqueTable(scip, sepadata->tcliquegraph, sepadata->cliquetablemem, sepadata->cliquedensity) );
+      SCIP_CALL( tcliquegraphConstructCliqueTable(scip, sepadata->tcliquegraph, cliquegraphidx, sepadata->cliquetablemem, sepadata->cliquedensity) );
 
       /* without a dense clique table, prepare clique marks to speed up the common clique tests */
       if( sepadata->tcliquegraph->cliquetable == NULL )
