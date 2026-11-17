@@ -635,20 +635,26 @@ SCIP_RETCODE SCIPconcurrentSolve(
    {
       SCIP_STATUS winnerstatus;
       SCIP_NODE* root;
+      SCIP_SOL* bestsol;
       SCIP_Real lowerbound;
       SCIP_Real upperbound;
+      SCIP_Bool hasincumbent;
 
       winnerstatus = SCIPsyncstoreGetWinnerStatus(syncstore);
       root = SCIPgetRootNode(scip);
       lowerbound = SCIPsyncstoreGetLastLowerbound(syncstore);
       upperbound = SCIPgetUpperbound(scip);
 
+      /* the solution counters were overwritten by the winner's statistics, so check the transferred solutions */
+      bestsol = SCIPgetBestSol(scip);
+      hasincumbent = bestsol != NULL && SCIPisLE(scip, SCIPgetSolTransObj(scip, bestsol), upperbound);
+
       /* a solver that proved optimality or infeasibility below the shared cutoff shows that no solution is better
        * than the best shared one; use this only if the main SCIP holds a solution that good
        */
       if( winnerstatus == SCIP_STATUS_OPTIMAL || winnerstatus == SCIP_STATUS_INFEASIBLE )
       {
-         if( SCIPgetNLimSolsFound(scip) > 0 && SCIPisLE(scip, upperbound, SCIPsyncstoreGetLastUpperbound(syncstore)) )
+         if( hasincumbent && SCIPisLE(scip, upperbound, SCIPsyncstoreGetLastUpperbound(syncstore)) )
             lowerbound = MAX(lowerbound, upperbound);
          else if( winnerstatus == SCIP_STATUS_INFEASIBLE && SCIPgetNSols(scip) == 0
             && SCIPisInfinity(scip, SCIPsyncstoreGetLastUpperbound(syncstore)) )
@@ -662,7 +668,7 @@ SCIP_RETCODE SCIPconcurrentSolve(
          SCIPprobSetDualbound(scip->transprob, SCIPprobExternObjval(scip->transprob, scip->origprob, scip->set, root->lowerbound));
       }
 
-      if( scip->stat->status != SCIP_STATUS_INFEASIBLE && SCIPgetNLimSolsFound(scip) > 0 )
+      if( scip->stat->status != SCIP_STATUS_INFEASIBLE && hasincumbent )
       {
          if( SCIPisGE(scip, SCIPgetLowerbound(scip), upperbound) )
             scip->stat->status = SCIP_STATUS_OPTIMAL;
