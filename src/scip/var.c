@@ -17147,6 +17147,7 @@ SCIP_RETCODE SCIPvarDelClique(
  *  @note a variable with it's negated variable are NOT! in a clique
  *  @note a variable with itself are in a clique
  */
+#undef SCIPvarsHaveCommonClique
 SCIP_Bool SCIPvarsHaveCommonClique(
    SCIP_VAR*             var1,               /**< first variable */
    SCIP_Bool             value1,             /**< value of first variable */
