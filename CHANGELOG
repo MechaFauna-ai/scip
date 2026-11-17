@@ -42,6 +42,7 @@ Performance improvements
   configurations that complement the default settings best (with four threads: default, intensified separation, no
   separation, and LNS instead of default, default with another seed, and two feasibility emphasis solvers); runs with
   ten or more threads use the same configurations as before
+- optimized common clique queries skip intersection searches when either selected clique list is empty
 - MIR variable-bound scans determine the current LP or pseudo solution once per scan
 - MIR variable-bound scans compute the section eligibility cutoff once per scan
 - optimized builds read the current solver stage directly in the internal settings accessor
