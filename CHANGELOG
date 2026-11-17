@@ -39,7 +39,6 @@ Performance improvements
 
 - optimized builds read the current solver stage directly in the internal settings accessor
 - flow cover variable-bound scans determine the current LP or pseudo solution once per scan
-
 - conflict bound insertion skips conversion and aggregation dispatch for loose and column variables
 - common clique queries inline the clique and implication dispatch in optimized builds
 - clique coloring handles covered, overlapping, or consecutive single color intervals without merging interval lists
