@@ -1021,6 +1021,30 @@ SCIP_DECL_CONCSOLVERSTOP(concsolverScipStop)
    return SCIP_OKAY;
 }
 
+/** gets the status of a concurrent solver to report at a synchronization
+ *
+ *  A solver stops when its upper bound does not exceed its lower bound, e.g., when the cutoff bound shared by another
+ *  solver cannot be improved, but its status then stays unknown if open nodes remain whose lower bounds are within
+ *  the tolerances; this is a proof, so report it as optimal if the solver holds a solution respecting its limits and
+ *  as infeasible below the cutoff bound otherwise.
+ */
+static
+SCIP_STATUS getConcsolverStatus(
+   SCIP*                 solverscip          /**< the concurrent solver's SCIP data structure */
+   )
+{
+   SCIP_STATUS status;
+
+   status = SCIPgetStatus(solverscip);
+
+   if( status == SCIP_STATUS_UNKNOWN && SCIPgetStage(solverscip) >= SCIP_STAGE_SOLVING
+      && SCIPgetStage(solverscip) <= SCIP_STAGE_SOLVED && !SCIPisInfinity(solverscip, SCIPgetUpperbound(solverscip))
+      && SCIPisLE(solverscip, SCIPgetUpperbound(solverscip), SCIPgetLowerbound(solverscip)) )
+      status = SCIPgetNLimSolsFound(solverscip) > 0 ? SCIP_STATUS_OPTIMAL : SCIP_STATUS_INFEASIBLE;
+
+   return status;
+}
+
 /** writes new solutions and global boundchanges to the given synchronization data */
 static
 SCIP_DECL_CONCSOLVERSYNCWRITE(concsolverScipSyncWrite)
@@ -1049,7 +1073,7 @@ SCIP_DECL_CONCSOLVERSYNCWRITE(concsolverScipSyncWrite)
       assert(data != NULL);
       assert(data->solverscip != NULL);
       concsolverid = SCIPconcsolverGetIdx(concsolver);
-      SCIPsyncdataSetStatus(syncdata, SCIPgetStatus(data->solverscip), concsolverid);
+      SCIPsyncdataSetStatus(syncdata, getConcsolverStatus(data->solverscip), concsolverid);
       return SCIP_OKAY;
    }
 
@@ -1057,7 +1081,7 @@ SCIP_DECL_CONCSOLVERSYNCWRITE(concsolverScipSyncWrite)
    assert(data != NULL);
    assert(data->solverscip != NULL);
    concsolverid = SCIPconcsolverGetIdx(concsolver);
-   solverstatus = SCIPgetStatus(data->solverscip);
+   solverstatus = getConcsolverStatus(data->solverscip);
 
    SCIPsyncdataSetStatus(syncdata, solverstatus, concsolverid);
    SCIPsyncdataSetLowerbound(syncdata, SCIPgetDualbound(data->solverscip));

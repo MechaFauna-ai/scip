@@ -385,6 +385,10 @@ Interface changes
 Fixed bugs
 ----------
 
+- a concurrent solve that finished because the best primal bound of one solver and the best dual bound of another closed
+  the gap, or because a solver's own bounds met below the shared cutoff bound, reported the status of the interrupted
+  winner (unknown) and its weaker dual bound; such a solver now reports optimal (or infeasible below the cutoff) at its
+  synchronization, and the main SCIP derives the final status and dual bound from the global concurrent information
 - skip the additional original-space incumbent check while Benders decompositions are active: master solutions can
   carry infinite values of the free Benders auxiliary variables (e.g. in LNS sub-SCIPs with lnscheck off), which made
   the original auxiliary variable constraint activity invalid and aborted debug runs

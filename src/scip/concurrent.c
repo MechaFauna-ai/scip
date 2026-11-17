@@ -626,6 +626,52 @@ SCIP_RETCODE SCIPconcurrentSolve(
     */
    SCIP_CALL( SCIPconcsolverGetSolvingData(concsolvers[idx], scip) );
 
+   /* the concurrent solve can finish while the solvers were only interrupted: a solver exhausted its search below the
+    * shared cutoff bound and reported a terminal status at its last synchronization, or the best primal bound of one
+    * solver and the best dual bound of another closed the gap; derive the status and the dual bound from this global
+    * information instead of the interrupted winner's own
+    */
+   if( scip->stat->status == SCIP_STATUS_UNKNOWN || scip->stat->status == SCIP_STATUS_USERINTERRUPT )
+   {
+      SCIP_STATUS winnerstatus;
+      SCIP_NODE* root;
+      SCIP_Real lowerbound;
+      SCIP_Real upperbound;
+
+      winnerstatus = SCIPsyncstoreGetWinnerStatus(syncstore);
+      root = SCIPgetRootNode(scip);
+      lowerbound = SCIPsyncstoreGetLastLowerbound(syncstore);
+      upperbound = SCIPgetUpperbound(scip);
+
+      /* a solver that proved optimality or infeasibility below the shared cutoff shows that no solution is better
+       * than the best shared one; use this only if the main SCIP holds a solution that good
+       */
+      if( winnerstatus == SCIP_STATUS_OPTIMAL || winnerstatus == SCIP_STATUS_INFEASIBLE )
+      {
+         if( SCIPgetNLimSolsFound(scip) > 0 && SCIPisLE(scip, upperbound, SCIPsyncstoreGetLastUpperbound(syncstore)) )
+            lowerbound = MAX(lowerbound, upperbound);
+         else if( winnerstatus == SCIP_STATUS_INFEASIBLE && SCIPgetNSols(scip) == 0
+            && SCIPisInfinity(scip, SCIPsyncstoreGetLastUpperbound(syncstore)) )
+            scip->stat->status = SCIP_STATUS_INFEASIBLE;
+      }
+
+      if( root != NULL && !SCIPisInfinity(scip, -lowerbound) && lowerbound > root->lowerbound )
+      {
+         root->lowerbound = MIN(lowerbound, upperbound);
+         root->estimate = root->lowerbound;
+         SCIPprobSetDualbound(scip->transprob, SCIPprobExternObjval(scip->transprob, scip->origprob, scip->set, root->lowerbound));
+      }
+
+      if( scip->stat->status != SCIP_STATUS_INFEASIBLE && SCIPgetNLimSolsFound(scip) > 0 )
+      {
+         if( SCIPisGE(scip, SCIPgetLowerbound(scip), upperbound) )
+            scip->stat->status = SCIP_STATUS_OPTIMAL;
+         else if( SCIPgetGap(scip) <= scip->set->limit_gap
+            || REALABS(SCIPgetPrimalbound(scip) - SCIPgetDualbound(scip)) <= scip->set->limit_absgap )
+            scip->stat->status = SCIP_STATUS_GAPLIMIT;
+      }
+   }
+
    for( i = nconcsolvers - 1; i >= 0; i-- )
       SCIPfreeBlockMemory(scip, &concurrentdata[i]);   /*lint !e866*/
    SCIPfreeBlockMemoryArray(scip, &concurrentdata, nconcsolvers);
