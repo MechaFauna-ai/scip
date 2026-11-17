@@ -3374,6 +3374,7 @@ SCIP_RETCODE SCIPsetFree(
 }
 
 /** returns current stage of SCIP */
+#undef SCIPsetGetStage
 SCIP_STAGE SCIPsetGetStage(
    SCIP_SET*             set                 /**< global SCIP settings */
    )

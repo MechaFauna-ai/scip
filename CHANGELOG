@@ -37,6 +37,7 @@ Features
 Performance improvements
 ------------------------
 
+- optimized builds read the current solver stage directly in the internal settings accessor
 - conflict bound insertion skips conversion and aggregation dispatch for loose and column variables
 - clique coloring handles covered, overlapping, or consecutive single color intervals without merging interval lists
 - the clique heuristic stops counting unfixed variables once a candidate cannot beat the current best clique,

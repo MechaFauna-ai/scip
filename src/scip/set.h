@@ -1716,6 +1716,7 @@ SCIP_Bool SCIPsetGetSubscipsOff(
  * speed up the algorithms.
  */
 
+#define SCIPsetGetStage(set)               ( (set)->stage )
 #define SCIPsetInfinity(set)               ( (set)->num_infinity )
 #define SCIPsetGetHugeValue(set)           ( (set)->num_hugeval )
 #define SCIPsetEpsilon(set)                ( (set)->num_epsilon )
