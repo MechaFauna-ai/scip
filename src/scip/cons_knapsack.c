@@ -265,13 +265,8 @@ struct SCIP_EventData
 };
 
 
-/** data structure to combine two sorting key values */
-struct sortkeypair
-{
-   SCIP_Real             key1;               /**< first sort key value */
-   SCIP_Real             key2;               /**< second sort key value */
-};
-typedef struct sortkeypair SORTKEYPAIR;
+/** key pairs for the public lexicographic sorting API */
+typedef SCIP_SORTKEYPAIR SORTKEYPAIR;
 
 /** status of GUB constraint */
 enum GUBVarstatus
@@ -322,25 +317,6 @@ typedef struct SCIP_GUBSet SCIP_GUBSET;
 /*
  * Local methods
  */
-
-/** comparison method for two sorting key pairs */
-static
-SCIP_DECL_SORTPTRCOMP(compSortkeypairs)
-{
-   SORTKEYPAIR* sortkeypair1 = (SORTKEYPAIR*)elem1;
-   SORTKEYPAIR* sortkeypair2 = (SORTKEYPAIR*)elem2;
-
-   if( sortkeypair1->key1 < sortkeypair2->key1 )
-      return -1;
-   else if( sortkeypair1->key1 > sortkeypair2->key1 )
-      return +1;
-   else if( sortkeypair1->key2 < sortkeypair2->key2 )
-      return -1;
-   else if( sortkeypair1->key2 > sortkeypair2->key2 )
-      return +1;
-   else
-      return 0;
-}
 
 /** creates event data */
 static
@@ -2924,7 +2900,7 @@ SCIP_RETCODE getLiftingSequence(
    /* sorts F, C2 and R */
    if( nvarsF > 0 )
    {
-      SCIPsortDownPtrInt((void**)sortkeypairsF, varsF, compSortkeypairs, nvarsF);
+      SCIPsortDownKeypairInt(sortkeypairsF, varsF, nvarsF);
    }
    if( nvarsC2 > 0 )
    {
@@ -3435,7 +3411,7 @@ SCIP_RETCODE getLiftingSequenceGUB(
    /* sort GFCI GUBs according to computed sorting keys */
    if( (*ngubconsGFC1) > 0 )
    {
-      SCIPsortDownPtrInt((void**)sortkeypairsGFC1, gubconsGFC1, compSortkeypairs, (*ngubconsGFC1));
+      SCIPsortDownKeypairInt(sortkeypairsGFC1, gubconsGFC1, (*ngubconsGFC1));
    }
 
    /* free temporary memory */
@@ -5397,7 +5373,7 @@ SCIP_RETCODE makeCoverMinimal(
          sortkeypairs[j]->key2 = (SCIP_Real) (-weights[covervars[j]]);
       }
    }
-   SCIPsortPtrInt((void**)sortkeypairssorted, covervars, compSortkeypairs, *ncovervars);
+   SCIPsortKeypairInt(sortkeypairssorted, covervars, *ncovervars);
 
    /* gets j' with a_j' = min{ a_j : j in C } */
    minweightidx = 0;

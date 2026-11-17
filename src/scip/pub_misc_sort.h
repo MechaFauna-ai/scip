@@ -56,6 +56,38 @@ extern "C" {
  * @{
  */
 
+/** two real sorting keys, compared lexicographically (keys must not be NaN) */
+struct SCIP_SortKeyPair
+{
+   SCIP_Real             key1;               /**< primary sorting key */
+   SCIP_Real             key2;               /**< secondary sorting key */
+};
+typedef struct SCIP_SortKeyPair SCIP_SORTKEYPAIR;
+
+/** sort key-pair pointers lexicographically in non-decreasing order and permute a joint integer array
+ *
+ * Neither key may be NaN. Equal keys, including signed zeros, compare equal. The sort is not stable;
+ * its permutation matches SCIPsortPtrInt() with a lexicographic comparator returning -1, 0, or +1.
+ */
+SCIP_EXPORT
+void SCIPsortKeypairInt(
+   SCIP_SORTKEYPAIR**    keypairs,           /**< array of pointers to key pairs */
+   int*                  intarray,           /**< joint integer array */
+   int                   len                 /**< length of arrays */
+   );
+
+/** sort key-pair pointers lexicographically in non-increasing order and permute a joint integer array
+ *
+ * Neither key may be NaN. Equal keys, including signed zeros, compare equal. The sort is not stable;
+ * its permutation matches SCIPsortDownPtrInt() with a lexicographic comparator returning -1, 0, or +1.
+ */
+SCIP_EXPORT
+void SCIPsortDownKeypairInt(
+   SCIP_SORTKEYPAIR**    keypairs,           /**< array of pointers to key pairs */
+   int*                  intarray,           /**< joint integer array */
+   int                   len                 /**< length of arrays */
+   );
+
 /** default comparer for integers */
 SCIP_EXPORT
 SCIP_DECL_SORTPTRCOMP(SCIPsortCompInt);

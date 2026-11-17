@@ -34,6 +34,8 @@
 
 #include "include/scip_test.h"
 
+#include <math.h>
+
 /* helper methods */
 
 /** compares two entries of an int array, returns 0 if both are equal, a negative number if the entry at position ind2
@@ -62,6 +64,22 @@ SCIP_DECL_SORTINDCOMP(intComparatorDescending)
    assert(tosort != NULL);
 
    return tosort[ind2] - tosort[ind1];
+}
+
+/** lexicographic comparison of two key pairs */
+static
+SCIP_DECL_SORTPTRCOMP(compareKeypairs)
+{
+   const SCIP_SORTKEYPAIR* first = (const SCIP_SORTKEYPAIR*)elem1;
+   const SCIP_SORTKEYPAIR* second = (const SCIP_SORTKEYPAIR*)elem2;
+
+   if( first->key1 < second->key1 )
+      return -1;
+   if( first->key1 > second->key1 )
+      return 1;
+   if( first->key2 < second->key2 )
+      return -1;
+   return first->key2 > second->key2;
 }
 
 /** GLOBAL VARIABLES **/
@@ -202,6 +220,65 @@ void test_sort_desc_sort_down(void)
    SCIPfreeBufferArray(scip, &perm);
 }
 
+/** checks key-pair sorts against the generic API, including shell-sort/ninther boundaries and tied keys */
+void test_sort_keypair_permutations(void)
+{
+   const int lengths[] = {0, 1, 2, 24, 25, 26, 728, 729, 730, 800};
+   SCIP_SORTKEYPAIR data[800];
+   SCIP_SORTKEYPAIR* localkeys[800];
+   void* generickeys[800];
+   int localidxs[800];
+   int genericidxs[800];
+   int n;
+   int pattern;
+   int down;
+   int i;
+
+   for( n = 0; n < (int)(sizeof(lengths) / sizeof(lengths[0])); ++n )
+   {
+      int len = lengths[n];
+
+      for( pattern = 0; pattern < 6; ++pattern )
+      {
+         for( down = 0; down < 2; ++down )
+         {
+            for( i = 0; i < len; ++i )
+            {
+               /* signed-zero ties, repeated pairs, sorted, reverse sorted, mixed finite keys, and infinities */
+               data[i].key1 = pattern == 0 ? (i % 2 == 0 ? 0.0 : -0.0)
+                  : pattern == 1 ? (SCIP_Real)(i % 7) : pattern == 2 ? (SCIP_Real)i
+                  : pattern == 3 ? (SCIP_Real)(len - i) : pattern == 4 ? (SCIP_Real)((i * 37) % 101 - 50)
+                  : i % 3 == 0 ? -INFINITY : i % 3 == 1 ? 0.0 : INFINITY;
+               data[i].key2 = pattern == 1 ? (SCIP_Real)((i / 7) % 3)
+                  : pattern == 4 ? (SCIP_Real)((i * 53) % 29 - 14) * 0.125
+                  : pattern == 5 ? (SCIP_Real)((i * 17) % 7) : 0.0;
+               localkeys[i] = &data[i];
+               generickeys[i] = &data[i];
+               localidxs[i] = i;
+               genericidxs[i] = i;
+            }
+
+            if( down )
+            {
+               SCIPsortDownPtrInt(generickeys, genericidxs, compareKeypairs, len);
+               SCIPsortDownKeypairInt(localkeys, localidxs, len);
+            }
+            else
+            {
+               SCIPsortPtrInt(generickeys, genericidxs, compareKeypairs, len);
+               SCIPsortKeypairInt(localkeys, localidxs, len);
+            }
+
+            for( i = 0; i < len; ++i )
+            {
+               TEST_ASSERT_EQUAL_INT(genericidxs[i], localidxs[i]);
+               TEST_ASSERT_TRUE(generickeys[i] == localkeys[i]);
+            }
+         }
+      }
+   }
+}
+
 int main(void)
 {
    UNITY_BEGIN();
@@ -210,5 +287,6 @@ int main(void)
    RUN_TEST(test_sort_asc_sort_down);
    RUN_TEST(test_sort_desc_sort_up);
    RUN_TEST(test_sort_desc_sort_down);
+   RUN_TEST(test_sort_keypair_permutations);
    return UNITY_END();
 }
