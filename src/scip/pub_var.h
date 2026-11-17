@@ -51,6 +51,7 @@
 
 #ifdef NDEBUG
 #include "scip/struct_var.h"
+#include "scip/pub_implics.h"
 #include "scip/implics.h"
 #include "scip/history.h"
 #include "scip/pub_lp.h"
