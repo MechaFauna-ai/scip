@@ -626,6 +626,68 @@ SCIP_RETCODE SCIPconcurrentSolve(
     */
    SCIP_CALL( SCIPconcsolverGetSolvingData(concsolvers[idx], scip) );
 
+   /* the concurrent solve can finish while the solvers were only interrupted: a solver exhausted its search below the
+    * shared cutoff bound and reported a terminal status at its last synchronization, or the best primal bound of one
+    * solver and the best dual bound of another closed the gap; derive the status and the dual bound from this global
+    * information instead of the interrupted winner's own; a winner that is infeasible below the shared cutoff bound,
+    * which is copied as winner if the solution pool is disabled, likewise proves the main SCIP's incumbent optimal
+    */
+   if( scip->stat->status == SCIP_STATUS_UNKNOWN || scip->stat->status == SCIP_STATUS_USERINTERRUPT
+      || (scip->stat->status == SCIP_STATUS_INFEASIBLE && SCIPgetBestSol(scip) != NULL) )
+   {
+      SCIP_STATUS winnerstatus;
+      SCIP_NODE* root;
+      SCIP_SOL* bestsol;
+      SCIP_Real lowerbound;
+      SCIP_Real upperbound;
+      SCIP_Bool hasincumbent;
+      SCIP_Bool infeasible;
+
+      winnerstatus = scip->stat->status == SCIP_STATUS_INFEASIBLE ? SCIP_STATUS_INFEASIBLE : SCIPsyncstoreGetWinnerStatus(syncstore);
+      root = SCIPgetRootNode(scip);
+      lowerbound = SCIPsyncstoreGetLastLowerbound(syncstore);
+      upperbound = SCIPgetUpperbound(scip);
+      infeasible = FALSE;
+
+      /* the solution counters were overwritten by the winner's statistics, so check the transferred solutions */
+      bestsol = SCIPgetBestSol(scip);
+      hasincumbent = bestsol != NULL && SCIPisLE(scip, SCIPgetSolTransObj(scip, bestsol), upperbound);
+
+      /* a solver that proved optimality or infeasibility below the shared cutoff shows that no solution is better
+       * than the best shared one; use this only if the main SCIP holds a solution that good
+       */
+      if( winnerstatus == SCIP_STATUS_OPTIMAL || winnerstatus == SCIP_STATUS_INFEASIBLE )
+      {
+         if( hasincumbent && SCIPisLE(scip, upperbound, SCIPsyncstoreGetLastUpperbound(syncstore)) )
+            lowerbound = MAX(lowerbound, upperbound);
+         else if( winnerstatus == SCIP_STATUS_INFEASIBLE && bestsol == NULL
+            && SCIPisInfinity(scip, SCIPsyncstoreGetLastUpperbound(syncstore)) )
+            infeasible = TRUE;
+      }
+
+      /* without a proof, an infeasible status contradicts the transferred solutions */
+      if( scip->stat->status == SCIP_STATUS_INFEASIBLE && !infeasible )
+         scip->stat->status = SCIP_STATUS_UNKNOWN;
+      else if( infeasible )
+         scip->stat->status = SCIP_STATUS_INFEASIBLE;
+
+      if( root != NULL && !SCIPisInfinity(scip, -lowerbound) && lowerbound > root->lowerbound )
+      {
+         root->lowerbound = MIN(lowerbound, upperbound);
+         root->estimate = root->lowerbound;
+         SCIPprobSetDualbound(scip->transprob, SCIPprobExternObjval(scip->transprob, scip->origprob, scip->set, root->lowerbound));
+      }
+
+      if( !infeasible && hasincumbent )
+      {
+         if( SCIPisGE(scip, SCIPgetLowerbound(scip), upperbound) )
+            scip->stat->status = SCIP_STATUS_OPTIMAL;
+         else if( SCIPgetGap(scip) <= scip->set->limit_gap
+            || REALABS(SCIPgetPrimalbound(scip) - SCIPgetDualbound(scip)) <= scip->set->limit_absgap )
+            scip->stat->status = SCIP_STATUS_GAPLIMIT;
+      }
+   }
+
    for( i = nconcsolvers - 1; i >= 0; i-- )
       SCIPfreeBlockMemory(scip, &concurrentdata[i]);   /*lint !e866*/
    SCIPfreeBlockMemoryArray(scip, &concurrentdata, nconcsolvers);
