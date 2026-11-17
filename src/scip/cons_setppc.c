@@ -186,6 +186,15 @@ struct SCIP_ConsData
 
 
 
+/** number of positions for which the data of a constraint is loaded ahead when propagating the marked constraints */
+#define PROPPREFETCHDIST 16
+
+#if defined(__GNUC__) || defined(__clang__)
+#define SCIPsetppcPrefetch(addr) __builtin_prefetch(addr)
+#else
+#define SCIPsetppcPrefetch(addr) ((void)(addr))
+#endif
+
 /*
  * Local methods
  */
@@ -8328,6 +8337,15 @@ SCIP_DECL_CONSPROP(consPropSetppc)
    /* propagate all marked set partitioning / packing / covering constraints */
    for( c = nmarkedconss - 1; c >= 0 && !cutoff; --c )
    {
+      /* the data of the marked constraints is often not in cache: load the constraints and their data some positions
+       * ahead
+       */
+      if( c >= PROPPREFETCHDIST )
+      {
+         SCIPsetppcPrefetch(conss[c - PROPPREFETCHDIST]);
+         SCIPsetppcPrefetch(&SCIPconsGetData(conss[c - PROPPREFETCHDIST / 2])->nfixedones);
+      }
+
       assert(SCIPconsGetData(conss[c]) != NULL);
 
       /* during presolving, we do not want to propagate constraints with multiaggregated variables. After presolving,
