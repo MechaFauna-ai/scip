@@ -37,6 +37,8 @@ Features
 Performance improvements
 ------------------------
 
+- prefetch local bounds while the locks heuristic scans long variable arrays
+
 - clique coloring maps adjacent graph nodes directly to their positions in the current subgraph
   The installed NBC scratch record now includes a graph-node index; its size is unchanged on standard 64-bit
   ABIs but grows on 32-bit ABIs. Out-of-tree consumers must size gsd for all graph nodes and rebuild against

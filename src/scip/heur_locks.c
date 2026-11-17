@@ -59,6 +59,7 @@
 #include "scip/scip_solvingstats.h"
 #include "scip/scip_timing.h"
 #include "scip/scip_tree.h"
+#include "scip/struct_var.h"
 
 
 #define HEUR_NAME             "locks"
@@ -332,6 +333,11 @@ SCIP_RETCODE SCIPapplyLockFixings(
       {
          for( i = v + 1; i < nbinvars; ++i )
          {
+#if defined(__GNUC__) || defined(__clang__)
+            /* Overlap scattered local-bound loads when scanning a long variable array. */
+            if( nbinvars >= 100 && i + 16 < nbinvars )
+               __builtin_prefetch(&sortvars[i + 16]->locdom);
+#endif
             var = sortvars[i];
 
             /* variable is already fixed; move it to the front and increment v to ignore it */
