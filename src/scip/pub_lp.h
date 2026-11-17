@@ -345,6 +345,23 @@ SCIP_Real* SCIProwGetVals(
    SCIP_ROW*             row                 /**< LP row */
    );
 
+/** gets array with the indices of the columns of the nonzero entries, in the same order as SCIProwGetCols() */
+SCIP_EXPORT
+int* SCIProwGetColIndices(
+   SCIP_ROW*             row                 /**< LP row */
+   );
+
+/** returns whether the row is not linked to any of its columns, which is the case for a cut before it is added to the
+ *  LP, and its columns are sorted by non-decreasing index (see SCIProwSort())
+ *
+ *  For such rows, SCIProwGetScalarProduct() sums the products of the common columns that are in the LP in increasing
+ *  order of the column index.
+ */
+SCIP_EXPORT
+SCIP_Bool SCIProwHasSortedUnlinkedCols(
+   SCIP_ROW*             row                 /**< LP row */
+   );
+
 /** gets constant shift of row */
 SCIP_EXPORT
 SCIP_Real SCIProwGetConstant(
@@ -526,6 +543,8 @@ SCIP_ROWEXACT* SCIProwGetRowExact(
 #define SCIProwGetNLPNonz(row)          (row)->nlpcols
 #define SCIProwGetCols(row)             (row)->cols
 #define SCIProwGetVals(row)             (row)->vals
+#define SCIProwGetColIndices(row)       (row)->cols_index
+#define SCIProwHasSortedUnlinkedCols(row) ((row)->nunlinked == (row)->len && (row)->nlpcols == 0 && (row)->nonlpcolssorted)
 #define SCIProwGetConstant(row)         (row)->constant
 #define SCIProwGetNorm(row)             sqrt((row)->sqrnorm)
 #define SCIProwGetSumNorm(row)          (row)->sumnorm

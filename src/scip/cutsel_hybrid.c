@@ -39,7 +39,6 @@
 #include "scip/scip_randnumgen.h"
 #include "scip/cutsel_hybrid.h"
 #include "scip/pub_lp.h"
-#include "scip/struct_lp.h"
 
 
 #define CUTSEL_NAME              "hybrid"
@@ -271,13 +270,13 @@ void computeCutData(
    SCIProwSort(row);
 
    data->norm = SCIProwGetNorm(row);
-   data->len = row->len;
+   data->len = SCIProwGetNNonz(row);
 
-   if( row->len > 0 && row->nunlinked == row->len && row->nlpcols == 0 && row->nonlpcolssorted && data->norm > 0.0 )
+   if( data->len > 0 && SCIProwHasSortedUnlinkedCols(row) && data->norm > 0.0 )
    {
-      data->colsidx = row->cols_index;
-      data->vals = row->vals;
-      *maxcolidx = MAX(*maxcolidx, row->cols_index[row->len - 1]);
+      data->colsidx = SCIProwGetColIndices(row);
+      data->vals = SCIProwGetVals(row);
+      *maxcolidx = MAX(*maxcolidx, data->colsidx[data->len - 1]);
    }
    else
    {
@@ -320,11 +319,14 @@ int filterWithParallelism(
    /* scatter the columns of the cut that are in the LP */
    if( usedense )
    {
+      SCIP_COL** cols;
       int j;
+
+      cols = SCIProwGetCols(cut);
 
       for( j = 0; j < data->len; ++j )
       {
-         if( cut->cols[j]->lppos >= 0 )
+         if( SCIPcolGetLPPos(cols[j]) >= 0 )
             dense[data->colsidx[j]] = data->vals[j];
       }
    }
