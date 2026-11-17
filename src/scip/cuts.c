@@ -4721,11 +4721,15 @@ SCIP_RETCODE findMIRBestLb(
          SCIP_VAR** vlbvars;
          SCIP_Real* vlbcoefs;
          SCIP_Real* vlbconsts;
+         SCIP_Bool lpsol;
          int i;
 
          vlbvars = SCIPvarGetVlbVars(var);
          vlbcoefs = SCIPvarGetVlbCoefs(var);
          vlbconsts = SCIPvarGetVlbConstants(var);
+
+         /* the current solution does not change while scanning the variable bounds */
+         lpsol = sol == NULL && SCIPtreeHasCurrentNodeLP(scip->tree);
 
          /* search best VLB */
          for( i = 0; i < nvlbs; i++ )
@@ -4739,7 +4743,8 @@ SCIP_RETCODE findMIRBestLb(
                SCIP_Real vlbsol;
                SCIP_Real vlbbnd;
 
-               vlbsol = SCIPgetSolVal(scip, sol, vlbvars[i]);
+               vlbsol = sol == NULL ? SCIPvarGetSol(vlbvars[i], lpsol)
+                  : SCIPgetSolVal(scip, sol, vlbvars[i]);
                vlbbnd = vlbcoefs[i] * vlbsol + vlbconsts[i];
 
                if( vlbbnd > bestvlb )
@@ -4810,11 +4815,15 @@ SCIP_RETCODE findMIRBestUb(
          SCIP_VAR** vubvars;
          SCIP_Real* vubcoefs;
          SCIP_Real* vubconsts;
+         SCIP_Bool lpsol;
          int i;
 
          vubvars = SCIPvarGetVubVars(var);
          vubcoefs = SCIPvarGetVubCoefs(var);
          vubconsts = SCIPvarGetVubConstants(var);
+
+         /* the current solution does not change while scanning the variable bounds */
+         lpsol = sol == NULL && SCIPtreeHasCurrentNodeLP(scip->tree);
 
          /* search best VUB */
          for( i = 0; i < nvubs; i++ )
@@ -4828,7 +4837,8 @@ SCIP_RETCODE findMIRBestUb(
                SCIP_Real vubsol;
                SCIP_Real vubbnd;
 
-               vubsol = SCIPgetSolVal(scip, sol, vubvars[i]);
+               vubsol = sol == NULL ? SCIPvarGetSol(vubvars[i], lpsol)
+                  : SCIPgetSolVal(scip, sol, vubvars[i]);
                vubbnd = vubcoefs[i] * vubsol + vubconsts[i];
 
                if( vubbnd < bestvub )
