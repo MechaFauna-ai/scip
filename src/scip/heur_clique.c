@@ -155,21 +155,24 @@ int getCliqueUnfixedVars(
    ncliquevars = SCIPcliqueGetNVars(clique);
    cliquevars = SCIPcliqueGetVars(clique);
 
+   /* find an unfixed variable first so that completely fixed cliques still return zero */
    for( v = 0; v < ncliquevars; ++v )
    {
       var = cliquevars[v];
-
-      /* is variable unfixed? */
       if( SCIPvarGetUbLocal(var) > SCIPvarGetLbLocal(var) + 0.5 )
       {
-         ++nunfixed;
-
-         /* A positive count that cannot beat the current best is sufficient.  Keep scanning all-fixed
-          * cliques so that the caller can still mark them as propagated.
-          */
-         if( nunfixed + (ncliquevars - v - 1) <= minsize )
-            break;
+         nunfixed = 1;
+         ++v;
+         break;
       }
+   }
+
+   /* once the count is positive, stop when even an entirely unfixed suffix cannot beat the current best */
+   for( ; v < ncliquevars && nunfixed + (ncliquevars - v) > minsize; ++v )
+   {
+      var = cliquevars[v];
+      if( SCIPvarGetUbLocal(var) > SCIPvarGetLbLocal(var) + 0.5 )
+         ++nunfixed;
    }
 
    return nunfixed;
