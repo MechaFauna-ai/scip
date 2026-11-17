@@ -1845,7 +1845,13 @@ SCIP_RETCODE checkNewIncumbentOrig(
    assert(feasible != NULL);
    assert(*feasible);
 
-   if( insertpos != 0 || !set->misc_checkincumbentorig || set->exact_enable || SCIPsolIsOriginal(sol) )
+   /* skip the check while Benders decompositions are active: Benders master problems and their LNS copies can carry
+    * infinite values of the free Benders auxiliary variables, which make the activity of the original auxiliary
+    * variable constraint invalid; Benders feasibility is still checked in the transformed space by the Benders
+    * constraint handler
+    */
+   if( insertpos != 0 || !set->misc_checkincumbentorig || set->exact_enable || SCIPsolIsOriginal(sol)
+      || set->nactivebenders > 0 )
       return SCIP_OKAY;
 
    /* same checks as for the best solution at the end of the solve: bounds, integrality, and all original constraints
