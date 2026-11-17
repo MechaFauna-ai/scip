@@ -1280,7 +1280,9 @@ SCIP_Bool SCIPvarsHaveCommonCliqueInline(
    SCIP_Bool             regardimplics       /**< should the implication graph also be searched for a clique? */
    )
 {
-   return (SCIPcliquelistsHaveCommonClique(var1->cliquelist, value1, var2->cliquelist, value2)
+   return ((SCIPcliquelistGetNCliques(var1->cliquelist, value1) > 0
+         && SCIPcliquelistGetNCliques(var2->cliquelist, value2) > 0
+         && SCIPcliquelistsHaveCommonClique(var1->cliquelist, value1, var2->cliquelist, value2))
       || (regardimplics && SCIPvarHasImplic(var1, value1, var2,
             value2 ? SCIP_BOUNDTYPE_UPPER : SCIP_BOUNDTYPE_LOWER)));
 }
