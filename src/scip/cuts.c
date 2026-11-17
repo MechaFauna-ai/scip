@@ -4737,6 +4737,8 @@ SCIP_RETCODE findMIRBestLb(
             /* For now, we only allow variable bounds from sections that are strictly greater to prevent cyclic usage.*/
             /** @todo: We don't use the caching mechanism of SCIPvarGetClosestVLB() because the cached variable bound
              * may be illegal. Building a local cache here may be worth it. */
+            assert(!SCIPvarIsActive(vlbvars[i]) || ((SCIPvarGetProbindex(vlbvars[i]) < sectionstart) ==
+               (varSection(data, SCIPvarGetProbindex(var)) < varSection(data, SCIPvarGetProbindex(vlbvars[i])))));
             if( SCIPvarIsActive(vlbvars[i]) && SCIPvarGetProbindex(vlbvars[i]) < sectionstart &&
                   (usevbds == 2 || SCIPvarIsBinary(vlbvars[i])) )
             {
@@ -4831,6 +4833,8 @@ SCIP_RETCODE findMIRBestUb(
             /* For now, we only allow variable bounds from sections that are strictly greater to prevent cyclic usage.*/
             /** @todo: We don't use the caching mechanism of SCIPvarGetClosestVLB() because the cached variable bound
              * may be illegal. Building a local cache here may be worth it. */
+            assert(!SCIPvarIsActive(vubvars[i]) || ((SCIPvarGetProbindex(vubvars[i]) < sectionstart) ==
+               (varSection(data, SCIPvarGetProbindex(var)) < varSection(data, SCIPvarGetProbindex(vubvars[i])))));
             if( SCIPvarIsActive(vubvars[i]) && SCIPvarGetProbindex(vubvars[i]) < sectionstart &&
                (usevbds == 2 || SCIPvarIsBinary(vubvars[i])) )
             {
