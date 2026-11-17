@@ -61,6 +61,7 @@
 #include "scip/struct_scip.h"
 #include "scip/struct_set.h"
 #include "scip/struct_certificate.h"
+#include "scip/tree.h"
 #include "scip/type_certificate.h"
 #include "scip/rational.h"
 
@@ -9242,11 +9243,15 @@ SCIP_RETCODE getClosestVlb(
       SCIP_VAR** vlbvars;
       SCIP_Real* vlbcoefs;
       SCIP_Real* vlbconsts;
+      SCIP_Bool lpsol;
       int i;
 
       vlbvars = SCIPvarGetVlbVars(var);
       vlbcoefs = SCIPvarGetVlbCoefs(var);
       vlbconsts = SCIPvarGetVlbConstants(var);
+
+      /* the current solution does not change while scanning the variable bounds */
+      lpsol = sol == NULL && SCIPtreeHasCurrentNodeLP(scip->tree);
 
       for( i = 0; i < nvlbs; i++ )
       {
@@ -9316,7 +9321,8 @@ SCIP_RETCODE getClosestVlb(
          if( val1 > 0.0 )
             continue;
 
-         vlbsol = vlbcoefs[i] * SCIPgetSolVal(scip, sol, vlbvars[i]) + vlbconsts[i];
+         vlbsol = vlbcoefs[i] * (sol == NULL ? SCIPvarGetSol(vlbvars[i], lpsol)
+            : SCIPgetSolVal(scip, sol, vlbvars[i])) + vlbconsts[i];
          if( vlbsol > *closestvlb )
          {
             *closestvlb = vlbsol;
@@ -9372,11 +9378,15 @@ SCIP_RETCODE getClosestVub(
       SCIP_VAR** vubvars;
       SCIP_Real* vubcoefs;
       SCIP_Real* vubconsts;
+      SCIP_Bool lpsol;
       int i;
 
       vubvars = SCIPvarGetVubVars(var);
       vubcoefs = SCIPvarGetVubCoefs(var);
       vubconsts = SCIPvarGetVubConstants(var);
+
+      /* the current solution does not change while scanning the variable bounds */
+      lpsol = sol == NULL && SCIPtreeHasCurrentNodeLP(scip->tree);
 
       for( i = 0; i < nvubs; i++ )
       {
@@ -9446,7 +9456,8 @@ SCIP_RETCODE getClosestVub(
          if( val1 < 0.0 )
             continue;
 
-         vubsol = vubcoefs[i] * SCIPgetSolVal(scip, sol, vubvars[i]) + vubconsts[i];
+         vubsol = vubcoefs[i] * (sol == NULL ? SCIPvarGetSol(vubvars[i], lpsol)
+            : SCIPgetSolVal(scip, sol, vubvars[i])) + vubconsts[i];
          if( vubsol < *closestvub )
          {
             *closestvub = vubsol;
