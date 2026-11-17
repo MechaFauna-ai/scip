@@ -1845,8 +1845,10 @@ SCIP_RETCODE checkNewIncumbentOrig(
    assert(feasible != NULL);
    assert(*feasible);
 
-   /* Benders master solutions need not define original subproblem variables; the Benders constraint handler
-    * checks their feasibility until a complete solution is available
+   /* skip the check while Benders decompositions are active: Benders master problems and their LNS copies can carry
+    * infinite values of the free Benders auxiliary variables, which make the activity of the original auxiliary
+    * variable constraint invalid; Benders feasibility is still checked in the transformed space by the Benders
+    * constraint handler
     */
    if( insertpos != 0 || !set->misc_checkincumbentorig || set->exact_enable || SCIPsolIsOriginal(sol)
       || set->nactivebenders > 0 )

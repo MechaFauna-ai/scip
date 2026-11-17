@@ -356,8 +356,9 @@ Interface changes
 Fixed bugs
 ----------
 
-- skip the additional original-space incumbent check for active Benders decompositions, whose master solutions
-  need not define the original subproblem variables
+- skip the additional original-space incumbent check while Benders decompositions are active: master solutions can
+  carry infinite values of the free Benders auxiliary variables (e.g. in LNS sub-SCIPs with lnscheck off), which made
+  the original auxiliary variable constraint activity invalid and aborted debug runs
 
 - a solution that is feasible in the transformed problem is no longer accepted as new incumbent if it is infeasible in
   the original problem; tolerances are relative to the constraint activities, so after an aggregation x = c - y with a
