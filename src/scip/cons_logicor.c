@@ -4926,7 +4926,8 @@ SCIP_DECL_CONSPRESOL(consPresolLogicor)
    SCIP_CALL( SCIPallocBufferArray(scip, &entries, nentries) );
 
    /* process constraints */
-   for( c = 0; c < nconss && *result != SCIP_CUTOFF && !SCIPisStopped(scip); ++c )
+   /* checking the limits reads the clock, which is expensive compared to processing a single constraint */
+   for( c = 0; c < nconss && *result != SCIP_CUTOFF && (c % 100 != 0 || !SCIPisStopped(scip)); ++c )
    {
       cons = conss[c];
       assert(cons != NULL);
