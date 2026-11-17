@@ -105,9 +105,10 @@ Performance improvements
 Interface changes
 -----------------
 
-- exported SCIPcliquelistsHaveCommonClique for optimized common-clique queries in shared-library clients
-
 ### Deleted and changed API methods
+
+- in optimized builds (NDEBUG), SCIPvarsHaveCommonClique() is now a macro that evaluates each argument once;
+  the exported function remains available for ABI compatibility
 
 - in optimized builds (NDEBUG), SCIPvarGetSol() is now a macro whose var argument may be evaluated up to three times;
   library callers must pass a side-effect-free variable argument. The exported function remains available for ABI
@@ -126,6 +127,8 @@ Interface changes
 - replaced use of unsigned long long by uint64_t
 
 ### New API functions
+
+- exported SCIPcliquelistsHaveCommonClique() in pub_implics.h for optimized common-clique queries in shared-library clients
 
 - added SCIPvarPrefetch() to hint the processor to load the data of a variable that is accessed when querying its
   status, bounds, and bound changes
