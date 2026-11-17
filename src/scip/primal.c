@@ -1845,7 +1845,11 @@ SCIP_RETCODE checkNewIncumbentOrig(
    assert(feasible != NULL);
    assert(*feasible);
 
-   if( insertpos != 0 || !set->misc_checkincumbentorig || set->exact_enable || SCIPsolIsOriginal(sol) )
+   /* Benders master solutions need not define original subproblem variables; the Benders constraint handler
+    * checks their feasibility until a complete solution is available
+    */
+   if( insertpos != 0 || !set->misc_checkincumbentorig || set->exact_enable || SCIPsolIsOriginal(sol)
+      || set->nactivebenders > 0 )
       return SCIP_OKAY;
 
    /* same checks as for the best solution at the end of the solve: bounds, integrality, and all original constraints
