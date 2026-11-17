@@ -335,7 +335,7 @@ SCIP_RETCODE SCIPapplyLockFixings(
          {
 #if defined(__GNUC__) || defined(__clang__)
             /* Overlap scattered local-bound loads when scanning a long variable array. */
-            if( nbinvars >= 100 && i + 16 < nbinvars )
+            if( nbinvars >= 100 && i < nbinvars - 16 )
                __builtin_prefetch(&sortvars[i + 16]->locdom);
 #endif
             var = sortvars[i];
