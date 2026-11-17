@@ -1099,8 +1099,11 @@ int SCIPsyncstoreGetWinner(
    if( syncstore->mode == SCIP_PARA_OPPORTUNISTIC )
       return syncstore->winnerstatus == SCIP_STATUS_UNKNOWN ? -1 : syncstore->winnerid;
 
+   /* the synchronization in which a solver reported a terminal status is not completed by all solvers if the others
+    * stop before reaching it, so fall back to the best terminal status recorded over all synchronizations
+    */
    if( syncstore->lastsync == NULL || syncstore->lastsync->status == SCIP_STATUS_UNKNOWN )
-      return -1;
+      return syncstore->winnerstatus == SCIP_STATUS_UNKNOWN ? -1 : syncstore->winnerid;
 
    return syncstore->lastsync->winner;
 }
@@ -1116,8 +1119,8 @@ SCIP_STATUS SCIPsyncstoreGetWinnerStatus(
    if( syncstore->mode == SCIP_PARA_OPPORTUNISTIC )
       return syncstore->winnerstatus;
 
-   if( syncstore->lastsync == NULL )
-      return SCIP_STATUS_UNKNOWN;
+   if( syncstore->lastsync == NULL || syncstore->lastsync->status == SCIP_STATUS_UNKNOWN )
+      return syncstore->winnerstatus;
 
    return syncstore->lastsync->status;
 }
