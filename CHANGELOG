@@ -116,6 +116,8 @@ Performance improvements
   every heuristic, since checking them reads the clock; same heuristic calls
 - linear constraint presolving checks the solving limits only every 100 constraints in its loop over all constraints
   instead of before every constraint, since checking them reads the clock; same presolving
+- logicor constraints sort their variables by index on an array of extracted indices instead of comparing the
+  variables, which loads each variable only once; same order
 
 Interface changes
 -----------------
