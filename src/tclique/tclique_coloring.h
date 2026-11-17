@@ -57,6 +57,7 @@ typedef struct _LIST_ITV
 typedef struct _NBC
 {
    int satdeg;
+   int vindex;                             /**< position in V, indexed by graph node rather than position in V */
    LIST_ITV *lcitv;
 } NBC;
 

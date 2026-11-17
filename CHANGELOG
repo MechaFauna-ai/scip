@@ -37,6 +37,7 @@ Features
 Performance improvements
 ------------------------
 
+- clique coloring maps adjacent graph nodes directly to their positions in the current subgraph
 - the first ten concurrent solvers of opportunistic concurrent solving receive the built-in parameter portfolio in the
   order 0, 9, 4, 6, 1, 2, 7, 5, 8, 3 instead of 0, ..., 9, so that runs with fewer than ten threads use the
   configurations that complement the default settings best (with four threads: default, intensified separation, no
