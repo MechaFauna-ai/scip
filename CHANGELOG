@@ -38,6 +38,9 @@ Performance improvements
 ------------------------
 
 - clique coloring handles covered, overlapping, or consecutive single color intervals without merging interval lists
+- the clique heuristic stops counting unfixed variables once a candidate cannot beat the current best clique,
+  while still identifying completely fixed cliques
+
 - avoid calculating gaps at each stopping check during solving when both gap limits are zero
 - LP row activity recalculation accumulates locally instead of storing the partial sum for each coefficient
 
