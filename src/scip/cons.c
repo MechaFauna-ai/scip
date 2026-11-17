@@ -64,6 +64,15 @@
 /* #define CHECKCONSARRAYS */
 
 
+/** number of positions for which the constraints with pending updates are loaded ahead */
+#define UPDATEPREFETCHDIST 8
+
+#if defined(__GNUC__) || defined(__clang__)
+#define SCIPconsPrefetch(addr) __builtin_prefetch(addr)
+#else
+#define SCIPconsPrefetch(addr) ((void)(addr))
+#endif
+
 /*
  * dynamic memory arrays
  */
@@ -1708,6 +1717,15 @@ SCIP_RETCODE conshdlrProcessUpdates(
 
    for( i = conshdlr->nupdateconss - 1; i >= 0; --i )
    {
+      /* the constraints with pending updates are often not in cache: load them some positions ahead; the update flags
+       * are in the second cache line of the constraint
+       */
+      if( i >= UPDATEPREFETCHDIST )
+      {
+         SCIPconsPrefetch(conshdlr->updateconss[i - UPDATEPREFETCHDIST]);
+         SCIPconsPrefetch(&conshdlr->updateconss[i - UPDATEPREFETCHDIST]->nupgradelocks);
+      }
+
       cons = conshdlr->updateconss[i];
       assert(cons != NULL);
       assert(cons->conshdlr == conshdlr);
