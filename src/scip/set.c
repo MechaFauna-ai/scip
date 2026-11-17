@@ -8049,13 +8049,20 @@ SCIP_Bool SCIPsetIsUpdateUnreliable(
    SCIP_Real             oldvalue            /**< old value, i.e., last reliable value */
    )
 {
-   SCIP_Real quotient;
+   SCIP_Real denominator;
 
    assert(set != NULL);
 
-   quotient = ABS(oldvalue) / MAX(ABS(newvalue), set->num_epsilon);
+   denominator = MAX(ABS(newvalue), set->num_epsilon);
 
-   return quotient >= set->num_recompfac;
+   /* if |oldvalue| < 0.5 * recompfac * denominator, the quotient is less than recompfac even after rounding; this
+    * multiplication is much cheaper than the division, which is needed only otherwise; for NaN values or a recompfac
+    * of 0, the condition is false and the quotient is computed as before
+    */
+   if( ABS(oldvalue) < 0.5 * set->num_recompfac * denominator )
+      return FALSE;
+
+   return ABS(oldvalue) / denominator >= set->num_recompfac;
 }
 
 /** prints a debug message */
