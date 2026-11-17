@@ -111,6 +111,8 @@ Performance improvements
   the list of branched variables instead of walking the shadow tree path again; same reductions
 - orbital reduction stores the indices moved by each permutation of a component and computes the orbits of the
   stabilizer subgroup from these instead of scanning all variables of the component for every permutation; same orbits
+- the primal heuristics loop checks the solving limits only after heuristics that were executed instead of after
+  every heuristic, since checking them reads the clock; same heuristic calls
 
 Interface changes
 -----------------

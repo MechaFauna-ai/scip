@@ -206,7 +206,9 @@ SCIP_RETCODE SCIPheurExec(
    SCIP_HEURTIMING       heurtiming,         /**< current point in the node solving process */
    SCIP_Bool             nodeinfeasible,     /**< was the current node already detected to be infeasible? */
    int*                  ndelayedheurs,      /**< pointer to count the number of delayed heuristics */
-   SCIP_RESULT*          result              /**< pointer to store the result of the callback method */
+   SCIP_RESULT*          result,             /**< pointer to store the result of the callback method */
+   SCIP_Bool*            executed            /**< pointer to store whether the execution method of the heuristic was
+                                              *   called, or NULL */
    );
 
 /** sets priority of primal heuristic */
