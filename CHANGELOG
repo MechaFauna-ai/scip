@@ -104,6 +104,8 @@ Performance improvements
 Interface changes
 -----------------
 
+- exported SCIPcliquelistsHaveCommonClique for optimized common-clique queries in shared-library clients
+
 ### Deleted and changed API methods
 
 - in optimized builds (NDEBUG), SCIPvarGetSol() is now a macro whose var argument may be evaluated up to three times;

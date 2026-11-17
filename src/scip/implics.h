@@ -295,6 +295,7 @@ SCIP_RETCODE SCIPcliquelistDel(
 /** returns whether the given clique lists have a non-empty intersection, i.e. whether there is a clique that appears
  *  in both lists
  */
+SCIP_EXPORT
 SCIP_Bool SCIPcliquelistsHaveCommonClique(
    SCIP_CLIQUELIST*      cliquelist1,        /**< first clique list data structure */
    SCIP_Bool             value1,             /**< value of first variable */
