@@ -38,6 +38,9 @@ Performance improvements
 ------------------------
 
 - clique coloring maps adjacent graph nodes directly to their positions in the current subgraph
+  The installed NBC scratch record now includes a graph-node index; its size is unchanged on standard 64-bit
+  ABIs but grows on 32-bit ABIs. Out-of-tree consumers must size gsd for all graph nodes and rebuild against
+  the matching header when the record layout changes.
 - the first ten concurrent solvers of opportunistic concurrent solving receive the built-in parameter portfolio in the
   order 0, 9, 4, 6, 1, 2, 7, 5, 8, 3 instead of 0, ..., 9, so that runs with fewer than ten threads use the
   configurations that complement the default settings best (with four threads: default, intensified separation, no
