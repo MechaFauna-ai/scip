@@ -365,6 +365,8 @@ Fixed bugs
   large constant c a violation that is negligible in the transformed constraint can exceed the tolerance of the
   original constraint (e.g. bell5 read from .nl: violation 2.5e-4 of -24 g12 + f12 <= 0 after f12 = 1000 - a12), and
   SCIP ended with a best solution that is infeasible in the original problem
+- the original-problem check of a new incumbent is skipped for solutions with an infinite, unknown, or invalid value of an
+  original variable, whose original constraint activities can be invalid
 
 Unit tests
 ----------
