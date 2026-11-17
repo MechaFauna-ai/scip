@@ -1575,6 +1575,7 @@ SCIP_RETCODE findDominancePairs(
    SCIP*                 scip,               /**< SCIP main data structure */
    SCIP_MATRIX*          matrix,             /**< matrix containing the constraints */
    SCIP_PRESOLDATA*      presoldata,         /**< presolver data */
+   const SCIP_Real*      colobjectives,      /**< cached objectives, or NULL if bounds may be changed during the scan */
    int*                  searchcols,         /**< indexes of variables for pair comparisons */
    int                   searchsize,         /**< number of variables for pair comparisons */
    SCIP_Bool             onlybinvars,        /**< flag indicating searchcols contains only binary variable indexes */
@@ -1607,6 +1608,7 @@ SCIP_RETCODE findDominancePairs(
    SCIP_Real tmpwcupperbounddominatedcol1;
    SCIP_Real tmpwcupperbounddominatedcol2;
    SCIP_Real obj1;
+   SCIP_Real obj2;
    SCIP_Bool col1domcol2;
    SCIP_Bool col2domcol1;
    SCIP_Bool onlyoneone;
@@ -1644,22 +1646,25 @@ SCIP_RETCODE findDominancePairs(
          continue;
 
       varcol1 = SCIPmatrixGetVar(matrix, col1);
-      obj1 = SCIPvarGetObj(varcol1);
+      obj1 = colobjectives != NULL ? colobjectives[col1] : SCIPvarGetObj(varcol1);
+      assert(colobjectives == NULL || obj1 == SCIPvarGetObj(varcol1));
 
       for( cnt2 = cnt1+1; cnt2 < searchsize; cnt2++ )
       {
          /* get index of the second variable */
          col2 = searchcols[cnt2];
          varcol2 = SCIPmatrixGetVar(matrix, col2);
+         obj2 = colobjectives != NULL ? colobjectives[col2] : SCIPvarGetObj(varcol2);
+         assert(colobjectives == NULL || obj2 == SCIPvarGetObj(varcol2));
          onlyoneone = FALSE;
 
          /* we always have minimize as obj sense */
 
          /* column 1 dominating column 2 */
-         col1domcol2 = (obj1 <= SCIPvarGetObj(varcol2));
+         col1domcol2 = (obj1 <= obj2);
 
          /* column 2 dominating column 1 */
-         col2domcol1 = (SCIPvarGetObj(varcol2) <= obj1);
+         col2domcol1 = (obj2 <= obj1);
 
          /* search only if nothing was found yet */
          col1domcol2 = col1domcol2 && (varstofix[col2] == NOFIX);
@@ -2070,6 +2075,7 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
    int pclassstart;
    int pc;
    SCIP_Bool* varineq;
+   SCIP_Real* colobjectives;
 
    assert(result != NULL);
    *result = SCIP_DIDNOTRUN;
@@ -2139,6 +2145,17 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
       varineq[v] = FALSE;
    }
 
+   /* Without predictive bound strengthening, pair searches only record fixings and cannot change objectives.
+    * Keep live objective reads when bound changes can call event handlers during the search.
+    */
+   colobjectives = NULL;
+   if( !presoldata->predbndstr )
+   {
+      SCIP_CALL( SCIPallocBufferArray(scip, &colobjectives, ncols) );
+      for( v = 0; v < ncols; ++v )
+         colobjectives[v] = SCIPvarGetObj(SCIPmatrixGetVar(matrix, v));
+   }
+
    /* init pair comparision control */
    presoldata->numcurrentpairs = presoldata->nummaxpairs;
 
@@ -2196,7 +2213,7 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
          /* continuous variables */
          if( nconfill > 1 && presoldata->continuousred )
          {
-            SCIP_CALL( findDominancePairs(scip, matrix, presoldata, consearchcols, nconfill, FALSE,
+            SCIP_CALL( findDominancePairs(scip, matrix, presoldata, colobjectives, consearchcols, nconfill, FALSE,
                   varstofix, &nfixings, &ndomrelations, nchgbds) );
 
             for( v = 0; v < nconfill; ++v )
@@ -2213,7 +2230,7 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
          /* integer and impl-integer variables */
          if( nintfill > 1 )
          {
-            SCIP_CALL( findDominancePairs(scip, matrix, presoldata, intsearchcols, nintfill, FALSE,
+            SCIP_CALL( findDominancePairs(scip, matrix, presoldata, colobjectives, intsearchcols, nintfill, FALSE,
                   varstofix, &nfixings, &ndomrelations, nchgbds) );
 
             for( v = 0; v < nintfill; ++v )
@@ -2230,7 +2247,7 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
          /* binary variables */
          if( nbinfill > 1 )
          {
-            SCIP_CALL( findDominancePairs(scip, matrix, presoldata, binsearchcols, nbinfill, TRUE,
+            SCIP_CALL( findDominancePairs(scip, matrix, presoldata, colobjectives, binsearchcols, nbinfill, TRUE,
                   varstofix, &nfixings, &ndomrelations, nchgbds) );
 
             for( v = 0; v < nbinfill; ++v )
@@ -2306,7 +2323,7 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
          /* continuous variables */
          if( nconfill > 1 && presoldata->continuousred )
          {
-            SCIP_CALL( findDominancePairs(scip, matrix, presoldata, consearchcols, nconfill, FALSE,
+            SCIP_CALL( findDominancePairs(scip, matrix, presoldata, colobjectives, consearchcols, nconfill, FALSE,
                   varstofix, &nfixings, &ndomrelations, nchgbds) );
 
             for( v = 0; v < nconfill; ++v )
@@ -2318,7 +2335,7 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
          /* integer and impl-integer variables */
          if( nintfill > 1 )
          {
-            SCIP_CALL( findDominancePairs(scip, matrix, presoldata, intsearchcols, nintfill, FALSE,
+            SCIP_CALL( findDominancePairs(scip, matrix, presoldata, colobjectives, intsearchcols, nintfill, FALSE,
                   varstofix, &nfixings, &ndomrelations, nchgbds) );
 
             for( v = 0; v < nintfill; ++v )
@@ -2330,7 +2347,7 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
          /* binary variables */
          if( nbinfill > 1 )
          {
-            SCIP_CALL( findDominancePairs(scip, matrix, presoldata, binsearchcols, nbinfill, TRUE,
+            SCIP_CALL( findDominancePairs(scip, matrix, presoldata, colobjectives, binsearchcols, nbinfill, TRUE,
                   varstofix, &nfixings, &ndomrelations, nchgbds) );
 
             for( v = 0; v < nbinfill; ++v )
@@ -2424,6 +2441,7 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
          *result = SCIP_SUCCESS;
    }
 
+   SCIPfreeBufferArrayNull(scip, &colobjectives);
    SCIPfreeBufferArray(scip, &varineq);
    SCIPfreeBufferArray(scip, &colidx);
    SCIPfreeBufferArray(scip, &pclass);

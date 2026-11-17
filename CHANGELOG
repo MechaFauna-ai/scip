@@ -37,6 +37,7 @@ Features
 Performance improvements
 ------------------------
 
+- dominant-column presolving caches objectives in a packed array when predictive bound strengthening is disabled
 - knapsack cover lifting and minimization use the fixed-comparator key-pair sort API, preserving the generic
   sort's exact permutation while avoiding indirect comparator calls
 - clique coloring maps adjacent graph nodes directly to their positions in the current subgraph
