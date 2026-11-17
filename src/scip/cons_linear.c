@@ -16342,10 +16342,17 @@ SCIP_DECL_CONSPRESOL(consPresolLinear)
    /* process single constraints */
    firstchange = INT_MAX;
    firstupgradetry = INT_MAX;
-   for( c = 0; c < nconss && !cutoff && !SCIPisStopped(scip); ++c )
+   for( c = 0; c < nconss && !cutoff; ++c )
    {
       int npresolrounds;
       SCIP_Bool infeasible;
+
+      /* checking the limits involves reading the clock, which is expensive compared to the cheap processing of the
+       * constraints that are already presolved; the presolving loop of each single constraint checks the limits
+       * itself, so it suffices to check them here periodically
+       */
+      if( c % 100 == 0 && SCIPisStopped(scip) )
+         break;
 
       infeasible = FALSE;
 
