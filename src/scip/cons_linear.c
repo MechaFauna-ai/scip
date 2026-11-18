@@ -11552,6 +11552,9 @@ SCIP_RETCODE rangedRowSimplify(
          for( v = 0; v < consdata->nvars; ++v )
          {
             vals[v] = round(vals[v] / gcd);
+            /* keep the coefficient copy in the event data up to date (see eventExecLinear()) */
+            if( consdata->eventdata != NULL && consdata->eventdata[v] != NULL )
+               consdata->eventdata[v]->val = vals[v];
             assert(!SCIPisZero(scip, vals[v]));
          }
 
@@ -12387,6 +12390,9 @@ SCIP_RETCODE simplifyInequalities(
          for( v = 0; v < consdata->nvars; ++v )
          {
             vals[v] = round(vals[v] / gcd);
+            /* keep the coefficient copy in the event data up to date (see eventExecLinear()) */
+            if( consdata->eventdata != NULL && consdata->eventdata[v] != NULL )
+               consdata->eventdata[v]->val = vals[v];
             assert(!SCIPisZero(scip, vals[v]));
          }
 
@@ -12849,6 +12855,9 @@ SCIP_RETCODE simplifyInequalities(
       for( v = 0; v < consdata->nvars; ++v )
       {
          vals[v] = round(vals[v] / gcd);
+         /* keep the coefficient copy in the event data up to date (see eventExecLinear()) */
+         if( consdata->eventdata != NULL && consdata->eventdata[v] != NULL )
+            consdata->eventdata[v]->val = vals[v];
          assert(!SCIPisZero(scip, vals[v]));
       }
 
