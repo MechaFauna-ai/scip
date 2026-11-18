@@ -336,6 +336,8 @@ Interface changes
 
 ### Changed parameters
 
+- default of `symmetries/rowcol/tryaddpriority` changed from -100000 to 300000, `symmetries/sst/tryaddpriority` from
+  -200000 to 200000, and `symmetries/lexorbred/tryaddpriority` from -300000 to 100000; negative values disable a handler
 - default of `presolving/maxrestarts` changed from -1 (unlimited) to 3; each restart redoes presolving and the root
   node including the root cut loop, and instances with many restarts (e.g. irp, nw04) spent much of their time there
 - numeric tolerance parameters (epsilon, sumepsilon, feastol, dualfeastol) are now checked for consistency, altogether before solving and individually when changed during solving, rejecting invalid combinations with an error
@@ -403,6 +405,9 @@ Interface changes
 Fixed bugs
 ----------
 
+- symmetry handling was disabled by default: since symmetry handlers with negative try-add priority are skipped,
+  the default try-add priorities of the rowcol, sst and lexorbred symmetry handlers are now 300000, 200000 and 100000
+  (same order as before), so that symmetry handling methods are added again by default
 - a concurrent solve that finished because the best primal bound of one solver and the best dual bound of another closed
   the gap, or because a solver's own bounds met below the shared cutoff bound, reported the status of the interrupted
   winner (unknown) and its weaker dual bound; such a solver now reports optimal (or infeasible below the cutoff) at its
