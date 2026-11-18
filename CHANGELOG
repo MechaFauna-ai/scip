@@ -24,6 +24,9 @@ Features
   global variable bounds through a bound pool that is applied at every node, instead of only at the synchronization
   points
 
+### Presolve
+- tighten binary coefficient not divisible by gcd of other integral coefficients in linear constraint also when coefficient or side is fractional
+
 ### Benders Decomposition
 - the no-good and integer optimality cuts for Benders' decomposition are generated per subproblem. Previously, only a
   single no-good or integer optimality cut was generated in a Benders' decomposition iteration. This change makes the
@@ -246,6 +249,7 @@ Interface changes
 - `heuristics/localsearch/onlybeforenode`: should run before presolving be skipped?
 - `heuristics/localsearch/onlywithoutsol`: should run with solution be skipped?
 - `estimation/checkpoint/depthlim`: depth below which checkpoint is updated
+- `symmetries/accuracy`: accuracy used to compare coefficients and bounds in symmetry detection
 - `symmetries/enabled`: whether symmetry handling in enabled
 - `symmetries/tryaddtiming`: whether symmetries are computed before or at the end of presolving
 - `symmetries/maxngenerators`: maximum number of generators of the symmetry group that is computed
@@ -597,6 +601,8 @@ Fixed bugs
   each branching call
 - fixed that SCIPeventqueueAdd() recorded a variable's event queue position before appending the event, which left a
   stale position if the append failed
+- do not print certificate lines for aggregation rows that become redundant in SCIPaggrRowSumRows()
+- ExactSCIP: remove dual proof constraints from the certificate hashmap whenever they are deleted from the conflict store to avoid SCIP_KEYALREADYEXISTING errors
 
 Examples and applications
 -------------------------
