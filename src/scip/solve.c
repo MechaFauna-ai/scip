@@ -1889,7 +1889,11 @@ SCIP_RETCODE extractSDG(
    SCIP_CALL( estimateSymgraphSize(scip, &nopnodes, &nvalnodes, &nconsnodes, &nedges) );
 
    /* create graph */
-   SCIP_CALL( SCIPgetRealParam(scip, "numerics/epsilon", &eps) );
+   eps = scip->set->sym_accuracy;
+   if( eps < 0 )
+   {
+      eps = scip->set->num_epsilon;
+   }
    SCIP_CALL( SCIPcreateSymgraph(scip, symtype, graph, SCIPgetVars(scip), SCIPgetNVars(scip),
          nopnodes, nvalnodes, nconsnodes, nedges, eps) );
 
@@ -2257,7 +2261,8 @@ SCIP_RETCODE computeComponentsSym(
 
 /** tries to add symmetry handling methods to CIP
  *
- *  Compute symmetry and call each symmetry handler to check whether particular symmetry handling methods can be added.
+ *  Compute symmetry and call each symmetry handler with non-negative priority to check whether
+ *  particular symmetry handling methods can be added.
  */
 SCIP_RETCODE SCIPtryAddSymmetryHandlingMethods(
    SCIP*                 scip,               /**< SCIP data structure */
@@ -2389,6 +2394,10 @@ SCIP_RETCODE SCIPtryAddSymmetryHandlingMethods(
 
       for( i = 0; i < nsymhdlrs && !success; ++i )
       {
+         /* symhdlrs are sorted by tryadd priority, i.e., we can terminate once one with negative priority is found */
+         if( symhdlrs[i]->tryaddpriority < 0 )
+            break;
+
          SCIP_CALL( SCIPsymhdlrTryAdd(symhdlrs[i], scip->set, perms, nperms, syminfo->symtype, syminfo->permvars, /*lint !e644 */
                syminfo->npermvars, vardomcenter, syminfo->permvarmap, graph, c, &symcompdata, &ntmpconss, allowbdchgs,
                &ntmpchgbds, &success) );
