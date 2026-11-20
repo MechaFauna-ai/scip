@@ -4721,6 +4721,8 @@ SCIP_RETCODE findMIRBestLb(
          SCIP_Real bestvlb = SCIP_REAL_MIN;
          int bestvlbtype = -1;
          int sectionstart = varSectionStart(data, SCIPvarGetProbindex(var));
+         int section = varSection(data, SCIPvarGetProbindex(var));
+         SCIP_Bool intsection = data->isenfint[section] || data->isimplint[section];
 
          SCIP_VAR** vlbvars;
          SCIP_Real* vlbcoefs;
@@ -4743,6 +4745,11 @@ SCIP_RETCODE findMIRBestLb(
              * may be illegal. Building a local cache here may be worth it. */
             assert(!SCIPvarIsActive(vlbvars[i]) || ((SCIPvarGetProbindex(vlbvars[i]) < sectionstart) ==
                (varSection(data, SCIPvarGetProbindex(var)) < varSection(data, SCIPvarGetProbindex(vlbvars[i])))));
+            /* in an integral section, the complemented variable x' = b*z + d - x (resp. x - (b*z + d)) is treated as
+             * integral when rounding, which is only valid if the variable bound has integral coefficient and constant */
+            if( intsection && !(SCIPisIntegral(scip, vlbcoefs[i]) && SCIPisIntegral(scip, vlbconsts[i])) )
+               continue;
+
             if( SCIPvarIsActive(vlbvars[i]) && SCIPvarGetProbindex(vlbvars[i]) < sectionstart &&
                   (usevbds == 2 || SCIPvarIsBinary(vlbvars[i])) )
             {
@@ -4817,6 +4824,8 @@ SCIP_RETCODE findMIRBestUb(
          SCIP_Real bestvub = SCIP_REAL_MAX;
          int bestvubtype = -1;
          int sectionstart = varSectionStart(data, SCIPvarGetProbindex(var));
+         int section = varSection(data, SCIPvarGetProbindex(var));
+         SCIP_Bool intsection = data->isenfint[section] || data->isimplint[section];
 
          SCIP_VAR** vubvars;
          SCIP_Real* vubcoefs;
@@ -4839,6 +4848,11 @@ SCIP_RETCODE findMIRBestUb(
              * may be illegal. Building a local cache here may be worth it. */
             assert(!SCIPvarIsActive(vubvars[i]) || ((SCIPvarGetProbindex(vubvars[i]) < sectionstart) ==
                (varSection(data, SCIPvarGetProbindex(var)) < varSection(data, SCIPvarGetProbindex(vubvars[i])))));
+            /* in an integral section, the complemented variable x' = b*z + d - x (resp. x - (b*z + d)) is treated as
+             * integral when rounding, which is only valid if the variable bound has integral coefficient and constant */
+            if( intsection && !(SCIPisIntegral(scip, vubcoefs[i]) && SCIPisIntegral(scip, vubconsts[i])) )
+               continue;
+
             if( SCIPvarIsActive(vubvars[i]) && SCIPvarGetProbindex(vubvars[i]) < sectionstart &&
                (usevbds == 2 || SCIPvarIsBinary(vubvars[i])) )
             {
@@ -8753,7 +8767,17 @@ SCIP_RETCODE SCIPcutGenerationHeuristicCMIR(
       solval = SCIPgetSolVal(scip, sol, var);
 
       /* now compute the solution value in the transform space considering complementation */
-      if( boundtype[i] == -1 )
+      if( boundtype[i] >= 0 )
+      {
+         /* variable was complemented with a variable bound */
+         if( varsign[i] == -1 )
+            solval = (SCIPvarGetVubCoefs(var)[boundtype[i]] * SCIPgetSolVal(scip, sol, SCIPvarGetVubVars(var)[boundtype[i]])
+               + SCIPvarGetVubConstants(var)[boundtype[i]]) - solval;
+         else
+            solval = solval - (SCIPvarGetVlbCoefs(var)[boundtype[i]] * SCIPgetSolVal(scip, sol, SCIPvarGetVlbVars(var)[boundtype[i]])
+               + SCIPvarGetVlbConstants(var)[boundtype[i]]);
+      }
+      else if( boundtype[i] == -1 )
       {
          /* variable was complemented with global (simple) bound */
          if( varsign[i] == -1 )
@@ -8972,6 +8996,11 @@ SCIP_RETCODE SCIPcutGenerationHeuristicCMIR(
       int bestubtype;
 
       k = bounddistpos[i];
+
+      /* the switch below assumes a simple bound complementation (as the corresponding switch in cutsTransformMIR());
+       * switching away from a variable bound would leave the contribution of the bounding variable in the cut */
+      if( boundtype[k] >= 0 )
+         continue;
 
       SCIP_CALL( findBestLb(scip, vars[mksetinds[k]], sol, 0, allowlocal, &bestlb, &bestlbtype) );
 
