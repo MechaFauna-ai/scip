@@ -40,6 +40,9 @@ Features
 Performance improvements
 ------------------------
 
+- dual proofs of bound exceeding LPs also drop continuous variables whose local bound in the proof equals their global
+  bound, as infeasibility proofs already did; long proofs on problems with many continuous variables are no longer
+  discarded for exceeding the maximal proof length
 - dominant-column presolving caches objectives in a packed array when predictive bound strengthening is disabled
 - knapsack cover lifting and minimization use the fixed-comparator key-pair sort API, preserving the generic
   sort's exact permutation while avoiding indirect comparator calls

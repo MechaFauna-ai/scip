@@ -1578,12 +1578,13 @@ SCIP_RETCODE tightenDualproof(
    }
 #endif
 
-   /* remove continuous variable contributing with their global bound
+   /* remove continuous variables contributing with their global bound
     *
-    * todo: check whether we also want to do that for bound exceeding proofs, but then we cannot update the
-    *       conflict anymore
+    * This also applies to bound exceeding proofs: the removed terms only add a constant to the right-hand side, so the
+    * side update after an improved incumbent (rhs * scale - old cutoff bound + new cutoff bound) stays valid.
     */
-   if( !set->exact_enable && proofset->conflicttype == SCIP_CONFTYPE_INFEASLP )
+   if( !set->exact_enable && (proofset->conflicttype == SCIP_CONFTYPE_INFEASLP
+         || proofset->conflicttype == SCIP_CONFTYPE_BNDEXCEEDING) )
    {
       /* remove all continuous variables that have equal global and local bounds (ub or lb depend on the sign)
        * from the proof
