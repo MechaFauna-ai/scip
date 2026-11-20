@@ -108,6 +108,9 @@
 #define MAX_DISAGGR_CLIQUEINCIDENCES 100000 /**< maximal total number of clique incidences of the items for which a
                                                  *   clique partition is computed when disaggregating a knapsack */
 #define MAX_ZEROITEMS_SIZE        10000 /**< maximal number of items to store in the zero list in preprocessing */
+#define MIN_DISAGGR_MAXCONSS      10000 /**< minimal budget on the number of set-packing constraints that disaggregation of
+                                          *   knapsacks may add in one presolving run; the budget is the maximum of this
+                                          *   value and the number of constraints when presolving starts */
 
 #define KNAPSACKRELAX_MAXDELTA        0.1 /**< maximal allowed rounding distance for scaling in knapsack relaxation */
 #define KNAPSACKRELAX_MAXDNOM      1000LL /**< maximal allowed denominator in knapsack rational relaxation */
@@ -203,6 +206,8 @@ struct SCIP_ConshdlrData
    int                   maxsepacuts;        /**< maximal number of cuts separated per separation round */
    int                   maxsepacutsroot;    /**< maximal number of cuts separated per separation round in the root node */
    SCIP_Bool             disaggregation;     /**< should disaggregation of knapsack constraints be allowed in preprocessing? */
+   int                   ndisaggrconss;      /**< number of set-packing constraints added by disaggregation in this presolving run */
+   int                   maxdisaggrconss;    /**< budget on ndisaggrconss in this presolving run */
    SCIP_Bool             simplifyinequalities;/**< should presolving try to cancel down or delete coefficients in inequalities */
    SCIP_Bool             negatedclique;      /**< should negated clique information be used in solving process */
    SCIP_Bool             presolpairwise;     /**< should pairwise constraint comparison be performed in presolving? */
@@ -10570,11 +10575,29 @@ SCIP_RETCODE tightenWeights(
    /* apply rule (2) (don't apply, if the knapsack has too many items for applying this costly method) */
    if( (presoltiming & SCIP_PRESOLTIMING_MEDIUM) != 0 )
    {
-      if( conshdlrdata->disaggregation && SCIPconsGetNUpgradeLocks(cons) == 0
+      SCIP_Bool disaggregate;
+      SCIP_Bool overbudget;
+
+      disaggregate = conshdlrdata->disaggregation && SCIPconsGetNUpgradeLocks(cons) == 0
          && consdata->nvars - pos <= MAX_USECLIQUES_SIZE && consdata->nvars >= 2 && pos > 0
          && (SCIP_Longint)consdata->nvars - pos <= consdata->capacity
          && consdata->weights[pos - 1] == consdata->capacity
-         && ( pos == consdata->nvars || consdata->weights[pos] == 1 ) )
+         && ( pos == consdata->nvars || consdata->weights[pos] == 1 );
+
+      /* disaggregation adds up to one set-packing constraint per remaining item; once the constraints added in this
+       * presolving run would exceed the budget, keep the knapsack as it is: it already provides the same cliques for
+       * propagation and separation, while many disaggregated rows can dominate the LP and presolving, and the
+       * clique-based weight tightening below is expensive on such knapsacks
+       */
+      overbudget = disaggregate && pos < consdata->nvars
+         && conshdlrdata->ndisaggrconss + (consdata->nvars - pos) > conshdlrdata->maxdisaggrconss;
+
+      if( overbudget )
+      {
+         SCIPdebugMsg(scip, "knapsack constraint <%s> not disaggregated: budget of %d added constraints reached\n",
+            SCIPconsGetName(cons), conshdlrdata->maxdisaggrconss);
+      }
+      else if( disaggregate )
       {
          SCIP_VAR** clqvars;
          SCIP_CONS* cliquecons;
@@ -10696,6 +10719,7 @@ SCIP_RETCODE tightenWeights(
             SCIP_CALL( SCIPreleaseCons(scip, &cliquecons) );
             ++(*naddconss);
          }
+         conshdlrdata->ndisaggrconss += nclq;
 
          /* delete old constraint */
          SCIP_CALL( SCIPdelCons(scip, cons) );
@@ -12230,6 +12254,9 @@ SCIP_DECL_CONSINITPRE(consInitpreKnapsack)
    conshdlrdata->upgradedcard = FALSE;
 #endif
 
+   conshdlrdata->ndisaggrconss = 0;
+   conshdlrdata->maxdisaggrconss = MAX(MIN_DISAGGR_MAXCONSS, SCIPgetNConss(scip));
+
    return SCIP_OKAY;
 }
 
@@ -13579,6 +13606,8 @@ SCIP_RETCODE SCIPincludeConshdlrKnapsack(
 
    /* create knapsack constraint handler data */
    SCIP_CALL( SCIPallocBlockMemory(scip, &conshdlrdata) );
+   conshdlrdata->ndisaggrconss = 0;
+   conshdlrdata->maxdisaggrconss = MIN_DISAGGR_MAXCONSS;
 
    /* include event handler for bound change events */
    eventhdlrdata = NULL;
