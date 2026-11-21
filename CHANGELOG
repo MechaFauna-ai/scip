@@ -6,6 +6,10 @@
 Features
 --------
 
+- new primal heuristic redcostlns (heur_redcostlns.c): at the root, applies the lurking reduced cost fixings (fixings that
+  reduced cost fixing would imply for a lower cutoff bound) in order of decreasing required cutoff in probing mode with
+  propagation until half of the integral variables are fixed, and solves the remaining problem as a sub-MIP (following
+  the root reduced cost heuristic of HiGHS)
 - new separator machinesched that detects single-machine scheduling substructures, i.e., sets of jobs whose start
   times are pairwise ordered by big-M disjunctions on binary variables, and adds release-date cuts to the cut pool
 - added functionality to compute symmetries of entire symmetry detection graph rather than just the restriction to variable nodes

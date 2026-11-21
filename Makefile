@@ -776,6 +776,7 @@ SCIPPLUGINLIBOBJ=	scip/benders_default.o \
 			scip/heur_reoptsols.o \
 			scip/heur_repair.o \
 			scip/heur_randrounding.o \
+			scip/heur_redcostlns.o \
 			scip/heur_rens.o \
 			scip/heur_rins.o \
 			scip/heur_rootsoldiving.o \
