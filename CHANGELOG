@@ -403,6 +403,9 @@ Interface changes
 Fixed bugs
 ----------
 
+- cMIR cut generation could produce invalid cuts when integral variables were complemented with variable bounds
+  (vartypeusevbds >= 3 in SCIPcalcMIR(), SCIPcutGenerationHeuristicCMIR() and SCIPcalcStrongCG()); variable bounds with
+  fractional coefficient or constant are no longer used to complement variables that are rounded as integral
 - a concurrent solve that finished because the best primal bound of one solver and the best dual bound of another closed
   the gap, or because a solver's own bounds met below the shared cutoff bound, reported the status of the interrupted
   winner (unknown) and its weaker dual bound; such a solver now reports optimal (or infeasible below the cutoff) at its
