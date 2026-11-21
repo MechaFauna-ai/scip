@@ -705,7 +705,10 @@ SCIP_RETCODE aggregateIntegerVar(
          continue;
 
       var = vars[inds[i]];
-      if( !SCIPvarIsInLP(var) || hasBinaryVbds(var) )
+      /* variables with binary variable bounds are left to cMIR's bound substitution, if it covers general integers
+       * (section 4: vartypeusevbds >= 5)
+       */
+      if( !SCIPvarIsInLP(var) || (sepadata->vartypeusevbds >= 5 && hasBinaryVbds(var)) )
          continue;
 
       solval = SCIPgetSolVal(scip, sol, var);
