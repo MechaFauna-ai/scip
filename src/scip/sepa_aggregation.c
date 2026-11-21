@@ -583,8 +583,78 @@ SCIP_Bool hasBinaryVbds(
    return found;
 }
 
+/** finds the best-scored LP row that cancels the given variable in the aggregation row; returns NULL if there is none */
+static
+SCIP_ROW* findIntVarCancelRow(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_SEPADATA*        sepadata,           /**< separator data */
+   SCIP_Bool             allowlocal,         /**< should local rows be allowed */
+   SCIP_Real*            rowlhsscores,       /**< aggregation scores for left hand sides of row */
+   SCIP_Real*            rowrhsscores,       /**< aggregation scores for right hand sides of row */
+   SCIP_AGGRROW*         aggrrow,            /**< current aggregation row */
+   SCIP_VAR*             var,                /**< variable to cancel */
+   SCIP_Real*            bestfac,            /**< pointer to store the weight of the row */
+   int*                  bestside            /**< pointer to store the side of the row (-1: lhs, 1: rhs) */
+   )
+{
+   SCIP_COL* col = SCIPvarGetCol(var);
+   SCIP_ROW** colrows = SCIPcolGetRows(col);
+   SCIP_Real* colvals = SCIPcolGetVals(col);
+   SCIP_Real aggrcoef = SCIPaggrRowGetProbvarValue(aggrrow, SCIPvarGetProbindex(var));
+   int ncolrows = SCIPcolGetNLPNonz(col);
+   SCIP_ROW* bestrow = NULL;
+   SCIP_Real bestrowscore = 0.0;
+   int i;
+
+   *bestfac = 0.0;
+   *bestside = 0;
+
+   for( i = 0; i < ncolrows; ++i )
+   {
+      SCIP_ROW* row = colrows[i];
+      SCIP_Real rowfac;
+      SCIP_Real rowscore;
+      int lppos;
+      int side;
+
+      if( SCIProwIsModifiable(row) || (!allowlocal && SCIProwIsLocal(row)) )
+         continue;
+
+      if( SCIPaggrRowHasRowBeenAdded(aggrrow, row) )
+         continue;
+
+      rowfac = -aggrcoef / colvals[i];
+      if( SCIPisFeasZero(scip, rowfac) || REALABS(rowfac) > sepadata->maxrowfac )
+         continue;
+
+      lppos = SCIProwGetLPPos(row);
+      if( (rowfac < 0.0 && !SCIPisInfinity(scip, -SCIProwGetLhs(row))) || SCIPisInfinity(scip, SCIProwGetRhs(row)) )
+      {
+         rowscore = rowlhsscores[lppos];
+         side = -1;
+      }
+      else
+      {
+         rowscore = rowrhsscores[lppos];
+         side = 1;
+      }
+
+      if( rowscore > bestrowscore )
+      {
+         bestrow = row;
+         bestrowscore = rowscore;
+         *bestfac = rowfac;
+         *bestside = side;
+      }
+   }
+
+   return bestrow;
+}
+
 /** aggregates a row that cancels a general integer variable of the aggregation row that is strictly between its bounds
  *  and cannot be replaced by variable bounds on binary variables; used if there is no continuous variable to cancel
+ *
+ *  The candidate variables are tried in order of decreasing weighted bound distance until one of them can be cancelled.
  */
 static
 SCIP_RETCODE aggregateIntegerVar(
@@ -600,13 +670,10 @@ SCIP_RETCODE aggregateIntegerVar(
    )
 {
    SCIP_VAR** vars;
-   SCIP_VAR* bestvar;
-   SCIP_ROW* bestrow;
-   SCIP_Real bestvarscore;
-   SCIP_Real bestrowscore;
-   SCIP_Real bestfac;
+   SCIP_VAR** candvars;
+   SCIP_Real* candscores;
    int* inds;
-   int bestside;
+   int ncands;
    int nnz;
    int lastintvar;
    int i;
@@ -618,9 +685,14 @@ SCIP_RETCODE aggregateIntegerVar(
    nnz = SCIPaggrRowGetNNz(aggrrow);
    inds = SCIPaggrRowGetInds(aggrrow);
 
-   /* find the general integer variable with the largest weighted bound distance */
-   bestvar = NULL;
-   bestvarscore = 0.0;
+   if( nnz == 0 )
+      return SCIP_OKAY;
+
+   SCIP_CALL( SCIPallocBufferArray(scip, &candvars, nnz) );
+   SCIP_CALL( SCIPallocBufferArray(scip, &candscores, nnz) );
+
+   /* collect the general integer variables strictly between their bounds, weighted by their coefficient */
+   ncands = 0;
    for( i = 0; i < nnz; ++i )
    {
       SCIP_VAR* var;
@@ -644,76 +716,32 @@ SCIP_RETCODE aggregateIntegerVar(
       if( !SCIPisFeasPositive(scip, dist) )
          continue;
 
-      dist *= REALABS(SCIPaggrRowGetProbvarValue(aggrrow, inds[i]));
-      if( dist > bestvarscore )
-      {
-         bestvarscore = dist;
-         bestvar = var;
-      }
+      candvars[ncands] = var;
+      candscores[ncands] = dist * REALABS(SCIPaggrRowGetProbvarValue(aggrrow, inds[i]));
+      ++ncands;
    }
 
-   if( bestvar == NULL )
-      return SCIP_OKAY;
+   SCIPsortDownRealPtr(candscores, (void**)candvars, ncands);
 
-   /* find the best row to cancel this variable */
+   /* cancel the first candidate for which a suitable row exists */
+   for( i = 0; i < ncands; ++i )
    {
-      SCIP_COL* col = SCIPvarGetCol(bestvar);
-      SCIP_ROW** colrows = SCIPcolGetRows(col);
-      SCIP_Real* colvals = SCIPcolGetVals(col);
-      SCIP_Real aggrcoef = SCIPaggrRowGetProbvarValue(aggrrow, SCIPvarGetProbindex(bestvar));
-      int ncolrows = SCIPcolGetNLPNonz(col);
+      SCIP_ROW* row;
+      SCIP_Real fac;
+      int side;
 
-      bestrow = NULL;
-      bestrowscore = 0.0;
-      bestfac = 0.0;
-      bestside = 0;
+      row = findIntVarCancelRow(scip, sepadata, allowlocal, rowlhsscores, rowrhsscores, aggrrow, candvars[i], &fac, &side);
+      if( row == NULL )
+         continue;
 
-      for( i = 0; i < ncolrows; ++i )
-      {
-         SCIP_ROW* row = colrows[i];
-         SCIP_Real rowfac;
-         SCIP_Real rowscore;
-         int lppos;
-         int side;
-
-         if( SCIProwIsModifiable(row) || (!allowlocal && SCIProwIsLocal(row)) )
-            continue;
-
-         if( SCIPaggrRowHasRowBeenAdded(aggrrow, row) )
-            continue;
-
-         rowfac = -aggrcoef / colvals[i];
-         if( SCIPisFeasZero(scip, rowfac) || REALABS(rowfac) > sepadata->maxrowfac )
-            continue;
-
-         lppos = SCIProwGetLPPos(row);
-         if( (rowfac < 0.0 && !SCIPisInfinity(scip, -SCIProwGetLhs(row))) || SCIPisInfinity(scip, SCIProwGetRhs(row)) )
-         {
-            rowscore = rowlhsscores[lppos];
-            side = -1;
-         }
-         else
-         {
-            rowscore = rowrhsscores[lppos];
-            side = 1;
-         }
-
-         if( rowscore > bestrowscore )
-         {
-            bestrow = row;
-            bestrowscore = rowscore;
-            bestfac = rowfac;
-            bestside = side;
-         }
-      }
+      ++(*naggrs);
+      SCIP_CALL( SCIPaggrRowAddRow(scip, aggrrow, row, fac, side) );
+      SCIPaggrRowRemoveZeros(scip, aggrrow, FALSE, success);
+      break;
    }
 
-   if( bestrow == NULL )
-      return SCIP_OKAY;
-
-   ++(*naggrs);
-   SCIP_CALL( SCIPaggrRowAddRow(scip, aggrrow, bestrow, bestfac, bestside) );
-   SCIPaggrRowRemoveZeros(scip, aggrrow, FALSE, success);
+   SCIPfreeBufferArray(scip, &candscores);
+   SCIPfreeBufferArray(scip, &candvars);
 
    return SCIP_OKAY;
 }
