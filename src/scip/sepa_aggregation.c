@@ -106,6 +106,8 @@
                                          *   aggregation, whose distance to its tightest bound is >= L - DEFAULT_AGGRTOL,
                                          *   where L is the largest of the distances between a continuous variable's value
                                          *   and its tightest bound in the current aggregation */
+#define DEFAULT_AGGRINTVARS       FALSE /**< should general integer variables without binary variable bounds be aggregated out? */
+#define DEFAULT_VARTYPEUSEVBDS         2 /**< variable types up to which variable bound substitution is used in cMIR (exclusive) */
 #define DEFAULT_TRYNEGSCALING      TRUE /**< should negative values also be tested in scaling? */
 #define DEFAULT_FIXINTEGRALRHS     TRUE /**< should an additional variable be complemented if f0 = 0? */
 #define DEFAULT_DYNAMICCUTS        TRUE /**< should generated cuts be removed from the LP if they are no longer tight? */
@@ -151,6 +153,8 @@ struct SCIP_SepaData
    SCIP_Bool             sepflowcover;       /**< whether flowcover cuts should be separated in the current call */
    SCIP_Bool             sepknapsackcover;   /**< whether knapsack cover cuts should be separated in the current call */
    SCIP_Bool             sepcmir;            /**< whether cMIR cuts should be separated in the current call */
+   SCIP_Bool             aggrintvars;        /**< should general integer variables without binary variable bounds be aggregated out? */
+   int                   vartypeusevbds;     /**< variable types for which variable bound substitution is allowed in cMIR */
    SCIP_SEPA*            cmir;               /**< separator for adding cmir cuts */
    SCIP_SEPA*            flowcover;          /**< separator for adding flowcover cuts */
    SCIP_SEPA*            knapsackcover;      /**< separator for adding knapsack cover cuts */
@@ -545,6 +549,206 @@ SCIP_Real aggrdataGetBoundDist(
    return aggrdata->bounddist[aggrdataidx];
 }
 
+/** checks whether an integer variable can be replaced by a variable bound on a binary variable on both sides */
+static
+SCIP_Bool hasBinaryVbds(
+   SCIP_VAR*             var                 /**< variable */
+   )
+{
+   SCIP_VAR** vbvars;
+   SCIP_Real* vbcoefs;
+   SCIP_Real* vbconsts;
+   SCIP_Bool found;
+   int n;
+   int i;
+
+   found = FALSE;
+   n = SCIPvarGetNVlbs(var);
+   vbvars = SCIPvarGetVlbVars(var);
+   vbcoefs = SCIPvarGetVlbCoefs(var);
+   vbconsts = SCIPvarGetVlbConstants(var);
+   for( i = 0; i < n && !found; ++i )
+      found = SCIPvarIsBinary(vbvars[i]) && SCIPvarIsActive(vbvars[i]) && EPSISINT(vbcoefs[i], 1e-9) && EPSISINT(vbconsts[i], 1e-9);
+   if( !found )
+      return FALSE;
+
+   found = FALSE;
+   n = SCIPvarGetNVubs(var);
+   vbvars = SCIPvarGetVubVars(var);
+   vbcoefs = SCIPvarGetVubCoefs(var);
+   vbconsts = SCIPvarGetVubConstants(var);
+   for( i = 0; i < n && !found; ++i )
+      found = SCIPvarIsBinary(vbvars[i]) && SCIPvarIsActive(vbvars[i]) && EPSISINT(vbcoefs[i], 1e-9) && EPSISINT(vbconsts[i], 1e-9);
+
+   return found;
+}
+
+/** finds the best-scored LP row that cancels the given variable in the aggregation row; returns NULL if there is none */
+static
+SCIP_ROW* findIntVarCancelRow(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_SEPADATA*        sepadata,           /**< separator data */
+   SCIP_Bool             allowlocal,         /**< should local rows be allowed */
+   SCIP_Real*            rowlhsscores,       /**< aggregation scores for left hand sides of row */
+   SCIP_Real*            rowrhsscores,       /**< aggregation scores for right hand sides of row */
+   SCIP_AGGRROW*         aggrrow,            /**< current aggregation row */
+   SCIP_VAR*             var,                /**< variable to cancel */
+   SCIP_Real*            bestfac,            /**< pointer to store the weight of the row */
+   int*                  bestside            /**< pointer to store the side of the row (-1: lhs, 1: rhs) */
+   )
+{
+   SCIP_COL* col = SCIPvarGetCol(var);
+   SCIP_ROW** colrows = SCIPcolGetRows(col);
+   SCIP_Real* colvals = SCIPcolGetVals(col);
+   SCIP_Real aggrcoef = SCIPaggrRowGetProbvarValue(aggrrow, SCIPvarGetProbindex(var));
+   int ncolrows = SCIPcolGetNLPNonz(col);
+   SCIP_ROW* bestrow = NULL;
+   SCIP_Real bestrowscore = 0.0;
+   int i;
+
+   *bestfac = 0.0;
+   *bestside = 0;
+
+   for( i = 0; i < ncolrows; ++i )
+   {
+      SCIP_ROW* row = colrows[i];
+      SCIP_Real rowfac;
+      SCIP_Real rowscore;
+      int lppos;
+      int side;
+
+      if( SCIProwIsModifiable(row) || (!allowlocal && SCIProwIsLocal(row)) )
+         continue;
+
+      if( SCIPaggrRowHasRowBeenAdded(aggrrow, row) )
+         continue;
+
+      rowfac = -aggrcoef / colvals[i];
+      if( SCIPisFeasZero(scip, rowfac) || REALABS(rowfac) > sepadata->maxrowfac )
+         continue;
+
+      lppos = SCIProwGetLPPos(row);
+      if( (rowfac < 0.0 && !SCIPisInfinity(scip, -SCIProwGetLhs(row))) || SCIPisInfinity(scip, SCIProwGetRhs(row)) )
+      {
+         rowscore = rowlhsscores[lppos];
+         side = -1;
+      }
+      else
+      {
+         rowscore = rowrhsscores[lppos];
+         side = 1;
+      }
+
+      if( rowscore > bestrowscore )
+      {
+         bestrow = row;
+         bestrowscore = rowscore;
+         *bestfac = rowfac;
+         *bestside = side;
+      }
+   }
+
+   return bestrow;
+}
+
+/** aggregates a row that cancels a general integer variable of the aggregation row that is strictly between its bounds
+ *  and cannot be replaced by variable bounds on binary variables; used if there is no continuous variable to cancel
+ *
+ *  The candidate variables are tried in order of decreasing weighted bound distance until one of them can be cancelled.
+ */
+static
+SCIP_RETCODE aggregateIntegerVar(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_SEPADATA*        sepadata,           /**< separator data */
+   SCIP_SOL*             sol,                /**< solution to separate, NULL for LP solution */
+   SCIP_Bool             allowlocal,         /**< should local rows be allowed */
+   SCIP_Real*            rowlhsscores,       /**< aggregation scores for left hand sides of row */
+   SCIP_Real*            rowrhsscores,       /**< aggregation scores for right hand sides of row */
+   SCIP_AGGRROW*         aggrrow,            /**< current aggregation row */
+   int*                  naggrs,             /**< pointer to increase counter if real aggregation took place */
+   SCIP_Bool*            success             /**< pointer to return whether another row was added to the aggregation row */
+   )
+{
+   SCIP_VAR** vars;
+   SCIP_VAR** candvars;
+   SCIP_Real* candscores;
+   int* inds;
+   int ncands;
+   int nnz;
+   int lastintvar;
+   int i;
+
+   *success = FALSE;
+
+   vars = SCIPgetVars(scip);
+   lastintvar = SCIPgetNBinVars(scip) + SCIPgetNIntVars(scip);
+   nnz = SCIPaggrRowGetNNz(aggrrow);
+   inds = SCIPaggrRowGetInds(aggrrow);
+
+   if( nnz == 0 )
+      return SCIP_OKAY;
+
+   SCIP_CALL( SCIPallocBufferArray(scip, &candvars, nnz) );
+   SCIP_CALL( SCIPallocBufferArray(scip, &candscores, nnz) );
+
+   /* collect the general integer variables strictly between their bounds, weighted by their coefficient */
+   ncands = 0;
+   for( i = 0; i < nnz; ++i )
+   {
+      SCIP_VAR* var;
+      SCIP_Real solval;
+      SCIP_Real lb;
+      SCIP_Real ub;
+      SCIP_Real dist;
+
+      if( inds[i] < SCIPgetNBinVars(scip) || inds[i] >= lastintvar )
+         continue;
+
+      var = vars[inds[i]];
+      /* variables with binary variable bounds are left to cMIR's bound substitution, if it covers general integers
+       * (section 4: vartypeusevbds >= 5)
+       */
+      if( !SCIPvarIsInLP(var) || (sepadata->vartypeusevbds >= 5 && hasBinaryVbds(var)) )
+         continue;
+
+      solval = SCIPgetSolVal(scip, sol, var);
+      lb = allowlocal ? SCIPvarGetLbLocal(var) : SCIPvarGetLbGlobal(var);
+      ub = allowlocal ? SCIPvarGetUbLocal(var) : SCIPvarGetUbGlobal(var);
+      dist = MIN(solval - lb, ub - solval);
+
+      if( !SCIPisFeasPositive(scip, dist) )
+         continue;
+
+      candvars[ncands] = var;
+      candscores[ncands] = dist * REALABS(SCIPaggrRowGetProbvarValue(aggrrow, inds[i]));
+      ++ncands;
+   }
+
+   SCIPsortDownRealPtr(candscores, (void**)candvars, ncands);
+
+   /* cancel the first candidate for which a suitable row exists */
+   for( i = 0; i < ncands; ++i )
+   {
+      SCIP_ROW* row;
+      SCIP_Real fac;
+      int side;
+
+      row = findIntVarCancelRow(scip, sepadata, allowlocal, rowlhsscores, rowrhsscores, aggrrow, candvars[i], &fac, &side);
+      if( row == NULL )
+         continue;
+
+      ++(*naggrs);
+      SCIP_CALL( SCIPaggrRowAddRow(scip, aggrrow, row, fac, side) );
+      SCIPaggrRowRemoveZeros(scip, aggrrow, FALSE, success);
+      break;
+   }
+
+   SCIPfreeBufferArray(scip, &candscores);
+   SCIPfreeBufferArray(scip, &candvars);
+
+   return SCIP_OKAY;
+}
+
 /** Aggregates the next row suitable for cancelling out an active continuous variable.
  *
  *  Equality rows that contain no other active continuous variables are preffered and apart from that
@@ -557,6 +761,8 @@ SCIP_RETCODE aggregateNextRow(
    SCIP_Real*            rowlhsscores,       /**< aggregation scores for left hand sides of row */
    SCIP_Real*            rowrhsscores,       /**< aggregation scores for right hand sides of row */
    AGGREGATIONDATA*      aggrdata,           /**< aggregation data */
+   SCIP_SOL*             sol,                /**< solution to separate, NULL for LP solution */
+   SCIP_Bool             allowlocal,         /**< should local rows be allowed */
    SCIP_AGGRROW*         aggrrow,            /**< current aggregation row */
    int*                  naggrs,             /**< pointer to increase counter if real aggregation took place */
    SCIP_Bool*            success             /**< pointer to return whether another row was added to the aggregation row */
@@ -607,7 +813,15 @@ SCIP_RETCODE aggregateNextRow(
    }
 
    if( nbadvars == 0 )
+   {
+      /* no continuous variable left to cancel: try to cancel a general integer variable without binary variable bounds */
+      if( sepadata->aggrintvars )
+      {
+         SCIP_CALL( aggregateIntegerVar(scip, sepadata, sol, allowlocal, rowlhsscores, rowrhsscores, aggrrow, naggrs,
+               success) );
+      }
       goto TERMINATE;
+   }
 
    SCIPsortDownRealInt(badvarbddist, badvarinds, nbadvars);
 
@@ -884,6 +1098,7 @@ SCIP_RETCODE aggregation(
       SCIPinitCutGenParams(&params);
       params.allowlocal = allowlocal;
       params.maxtestdelta = maxtestdelta;
+      params.vartypeusevbds = sepadata->vartypeusevbds;
 
       /* set enabled methods */
       methods = SCIP_CUTGENMETHOD_NONE;
@@ -973,7 +1188,7 @@ SCIP_RETCODE aggregation(
          break;
       }
 
-      SCIP_CALL( aggregateNextRow(scip, sepadata, rowlhsscores, rowrhsscores, aggrdata, aggrdata->aggrrow,
+      SCIP_CALL( aggregateNextRow(scip, sepadata, rowlhsscores, rowrhsscores, aggrdata, sol, allowlocal, aggrdata->aggrrow,
             &naggrs, &aggrsuccess) );
 
       /* no suitable aggregation was found or number of non-zeros is now too large so abort */
@@ -1614,6 +1829,14 @@ SCIP_RETCODE SCIPincludeSepaAggregation(
          "separating/" SEPA_NAME "/trynegscaling",
          "should negative values also be tested in scaling?",
          &sepadata->trynegscaling, TRUE, DEFAULT_TRYNEGSCALING, NULL, NULL) );
+   SCIP_CALL( SCIPaddBoolParam(scip,
+         "separating/" SEPA_NAME "/aggrintvars",
+         "should general integer variables without binary variable bounds be aggregated out if no continuous variable is left?",
+         &sepadata->aggrintvars, TRUE, DEFAULT_AGGRINTVARS, NULL, NULL) );
+   SCIP_CALL( SCIPaddIntParam(scip,
+         "separating/" SEPA_NAME "/vartypeusevbds",
+         "variable types (0: cont, 1: cont implint, 2: int implint, 3: bin implint, 4: int) up to which variable bound substitution is used in cMIR (exclusive)",
+         &sepadata->vartypeusevbds, TRUE, DEFAULT_VARTYPEUSEVBDS, 0, 5, NULL, NULL) );
    SCIP_CALL( SCIPaddBoolParam(scip,
          "separating/" SEPA_NAME "/fixintegralrhs",
          "should an additional variable be complemented if f0 = 0?",
