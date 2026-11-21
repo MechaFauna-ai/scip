@@ -176,6 +176,7 @@ SCIP_RETCODE SCIPincludeDefaultPlugins(
    SCIP_CALL( SCIPincludeHeurRepair(scip) );
    SCIP_CALL( SCIPincludeHeurSimplerounding(scip) );
    SCIP_CALL( SCIPincludeHeurRandrounding(scip) );
+   SCIP_CALL( SCIPincludeHeurRedcostlns(scip) );
    SCIP_CALL( SCIPincludeHeurZirounding(scip) );
    SCIP_CALL( SCIPincludeHeurRounding(scip) );
    SCIP_CALL( SCIPincludeHeurShifting(scip) );
