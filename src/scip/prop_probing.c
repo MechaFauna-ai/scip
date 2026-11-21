@@ -110,6 +110,8 @@ struct SCIP_PropData
    int                   proprounds;         /**< maximal number of propagation rounds in probing subproblems */
    int                   maxfixings;         /**< maximal number of fixings found, until probing is interrupted
                                               *   (0: don't interrupt) */
+   int                   curmaxfixings;      /**< current interruption limit on fixings; starts at maxfixings and doubles
+                                              *   after each interruption in a presolving run (0: don't interrupt) */
    int                   maxuseless;         /**< maximal number of successive probings without fixings,
                                               *   until probing is aborted (0: don't abort) */
    int                   maxtotaluseless;    /**< maximal number of successive probings without fixings, bound changes,
@@ -182,6 +184,7 @@ SCIP_RETCODE initPropdata(
    propdata->ntotaluseless = 0;
    propdata->nsumuseless = 0;
    propdata->lastnode = -2;
+   propdata->curmaxfixings = DEFAULT_MAXFIXINGS;
    propdata->randnumgen = NULL;
 
    return SCIP_OKAY;
@@ -813,7 +816,7 @@ SCIP_RETCODE applyProbing(
    assert(vars != NULL);
    assert(nbinvars > 0);
 
-   maxfixings = (propdata->maxfixings > 0 ? propdata->maxfixings : INT_MAX);
+   maxfixings = (propdata->curmaxfixings > 0 ? propdata->curmaxfixings : INT_MAX);
    maxuseless = (propdata->maxuseless > 0 ? propdata->maxuseless : INT_MAX);
    maxtotaluseless = (propdata->maxtotaluseless > 0 ? propdata->maxtotaluseless : INT_MAX);
    maxsumuseless = (propdata->maxsumuseless > 0 ? propdata->maxsumuseless : INT_MAX);
@@ -1296,6 +1299,7 @@ SCIP_DECL_PROPINITPRE(propInitpreProbing)
    assert(propdata != NULL);
 
    propdata->lastnode = -2;
+   propdata->curmaxfixings = propdata->maxfixings;
 
    return SCIP_OKAY;
 }
@@ -1337,6 +1341,7 @@ SCIP_DECL_PROPINITSOL(propInitsolProbing)
    propdata->nuseless = 0;
    propdata->ntotaluseless = 0;
    propdata->nsumuseless = 0;
+   propdata->curmaxfixings = propdata->maxfixings;
 
    return SCIP_OKAY;
 }
@@ -1465,6 +1470,12 @@ SCIP_DECL_PROPPRESOL(propPresolProbing)
       {
          /* probing was interrupted because it reached the maximal fixings parameter, so we want to rerun it at the next call */
          propdata->lastnode = -2;
+
+         /* each interruption makes presolving run another round of all presolvers before probing continues; double the
+          * limit so that probing on many fixable variables is interrupted O(log n) instead of O(n) times
+          */
+         if( propdata->curmaxfixings > 0 && propdata->curmaxfixings <= INT_MAX / 2 )
+            propdata->curmaxfixings *= 2;
       }
 
       if( *nfixedvars > oldnfixedvars || *naggrvars > oldnaggrvars || *nchgbds > oldnchgbds
