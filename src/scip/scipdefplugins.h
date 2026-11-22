@@ -197,6 +197,7 @@
 #include "scip/presol_tworowbnd.h"
 #include "scip/presol_sparsify.h"
 #include "scip/presol_dualsparsify.h"
+#include "scip/presol_enumeration.h"
 #include "scip/presol_stuffing.h"
 #include "scip/prop_distance.h"
 #include "scip/prop_dualfix.h"

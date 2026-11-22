@@ -457,6 +457,7 @@ add_library(objects_base OBJECT
    scip/presol_redvub.c
    scip/presol_sparsify.c
    scip/presol_dualsparsify.c
+   scip/presol_enumeration.c
    scip/presol_stuffing.c
    scip/presol_trivial.c
    scip/presol_tworowbnd.c
@@ -1047,6 +1048,7 @@ foreach(header_file
       scip/presol_redvub.h
       scip/presol_sparsify.h
       scip/presol_dualsparsify.h
+      scip/presol_enumeration.h
       scip/presol_stuffing.h
       scip/presol_trivial.h
       scip/presol_tworowbnd.h
