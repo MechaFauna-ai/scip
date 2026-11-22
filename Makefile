@@ -886,6 +886,7 @@ SCIPPLUGINLIBOBJ=	scip/benders_default.o \
 			scip/sepa_mcf.o \
 			scip/sepa_minor.o \
 			scip/sepa_mixing.o \
+			scip/sepa_modk.o \
 			scip/sepa_oddcycle.o \
 			scip/sepa_rapidlearning.o \
 			scip/sepa_rlt.o \
