@@ -248,6 +248,7 @@ SCIP_RETCODE SCIPincludeDefaultPlugins(
    SCIP_CALL( SCIPincludeSepaAggregation(scip) );
    SCIP_CALL( SCIPincludeSepaClique(scip) );
    SCIP_CALL( SCIPincludeSepaZerohalf(scip) );
+   SCIP_CALL( SCIPincludeSepaModk(scip) );
    SCIP_CALL( SCIPincludeSepaLagromory(scip) );
    SCIP_CALL( SCIPincludeSepaMachinesched(scip) );
    SCIP_CALL( SCIPincludeSepaMcf(scip) );
