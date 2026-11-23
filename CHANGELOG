@@ -6,7 +6,7 @@
 Features
 --------
 
-- new separator modk that separates mod-k Chvatal-Gomory cuts for the primes k = 3, 5, 7 (optionally also k = 2):
+- new separator modk (disabled by default; enable with `separating/modk/freq = 0`) that separates mod-k Chvatal-Gomory cuts for the primes k = 3, 5, 7 (optionally also k = 2):
   the tight LP rows are transformed to bound-distance space and scaled to integers, row weights are obtained by sparse
   Gaussian elimination over GF(k), and MIR cuts are computed from the resulting aggregations (approach of HiGHS)
 - new separator machinesched that detects single-machine scheduling substructures, i.e., sets of jobs whose start

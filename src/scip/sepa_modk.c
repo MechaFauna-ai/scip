@@ -80,7 +80,7 @@
 #define SEPA_NAME              "modk"
 #define SEPA_DESC              "mod-k cuts separator for small primes k"
 #define SEPA_PRIORITY             -6100
-#define SEPA_FREQ                     0
+#define SEPA_FREQ                    -1 /**< off by default (opt-in): +2 solved but 5.6% slower on MIPLIB 2017 (final benchmark) */
 #define SEPA_MAXBOUNDDIST           1.0
 #define SEPA_USESSUBSCIP          FALSE
 #define SEPA_DELAY                FALSE
