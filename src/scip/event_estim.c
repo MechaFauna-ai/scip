@@ -252,7 +252,7 @@ typedef struct TreeProfile TREEPROFILE;
 #define DEFAULT_TREEPROFILE_ENABLED  FALSE   /**< Should the event handler collect data? */
 #define DEFAULT_TREEPROFILE_MINNODESPERDEPTH 20.0 /**< minimum average number of nodes at each depth before producing estimations */
 #define DEFAULT_RESTARTPOLICY        'e'     /**< default restart policy: (a)lways, (c)ompletion, (e)stimation, (n)ever */
-#define DEFAULT_RESTARTLIMIT          1      /**< default restart limit (-1: no limit, restarts are limited by restartgrowth) */
+#define DEFAULT_RESTARTLIMIT          1      /**< default restart limit (-1: no limit) */
 #define DEFAULT_MINNODES             1000L   /**< minimum number of nodes before restart */
 #define DEFAULT_COUNTONLYLEAVES      FALSE   /**< should only leaves count for the minnodes parameter? */
 #define DEFAULT_RESTARTFACTOR        50.0    /**< factor by which the estimated number of nodes should exceed the current number of nodes */
@@ -2515,7 +2515,7 @@ SCIP_Bool shouldApplyRestartEstimation(
             estimation);
       )
 
-      return FALSE;
+      return TRUE;
    }
 
    /* if the estimation exceeds the current number of nodes by a dramatic factor, restart */
