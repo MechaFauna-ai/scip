@@ -783,13 +783,31 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpGomory)
 
          if( success )
          {
-            cutefficacy = (posscgeff > 0.0 ? 1.05 * posscgeff : 0.0);
+            SCIP_Real scgthresh = (posscgeff > 0.0 ? 1.05 * posscgeff : 0.0);
+            SCIP_Real gmithresh = (posgmieff > 0.0 ? 1.05 * posgmieff : 0.0);
+            SCIP_Real negscgeff = 0.0;
+
+            cutefficacy = 0.0;
             strongcgsuccess = FALSE;
 
             if( separatescg )
             {
                SCIP_CALL( SCIPcalcStrongCG(scip, NULL, POSTPROCESS, BOUNDSWITCH, VARTYPEUSEVBDS, allowlocal, minfrac, maxfrac,
                   1.0, aggrrow, cutcoefs, &cutrhs, cutinds, &cutnnz, &cutefficacy, &cutrank, &cutislocal, &strongcgsuccess) );
+
+               if( strongcgsuccess )
+               {
+                  SCIP_Real minthresh = sepadata->genbothgomscg ? scgthresh : MAX(scgthresh, gmithresh);
+                  if( cutefficacy <= minthresh )
+                  {
+                     strongcgsuccess = FALSE;
+                     cutefficacy = 0.0;
+                  }
+                  else
+                  {
+                     negscgeff = cutefficacy;
+                  }
+               }
 
                if( strongcgsuccess && sepadata->genbothgomscg )
                {
@@ -802,6 +820,8 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpGomory)
                      colindsproducedcut[i] = c;
                   }
                   strongcgsuccess = FALSE;
+                  negscgeff = 0.0;
+                  cutefficacy = 0.0;
                   if( cutoff )
                      break;
                }
@@ -809,25 +829,25 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpGomory)
 
             if( separategmi && naddedcuts < maxsepacuts )
             {
-               if( !strongcgsuccess )
-                  cutefficacy = (posgmieff > 0.0 ? 1.05 * posgmieff : 0.0);
-               else
-                  cutefficacy = MAX(cutefficacy, (posgmieff > 0.0 ? 1.05 * posgmieff : 0.0));
+               SCIP_Real mirthresh = strongcgsuccess ? MAX(negscgeff, gmithresh) : gmithresh;
+               cutefficacy = mirthresh;
 
                SCIP_CALL( SCIPcalcMIR(scip, NULL, POSTPROCESS, BOUNDSWITCH, VARTYPEUSEVBDS, allowlocal, FIXINTEGRALRHS, NULL, NULL,
                   minfrac, maxfrac, 1.0, aggrrow, cutcoefs, &cutrhs, cutinds, &cutnnz, &cutefficacy, &cutrank, &cutislocal, &success) );
 
                if( success || strongcgsuccess )
                {
+                  SCIP_Real finalcut_eff = success ? cutefficacy : negscgeff;
+
                   assert(allowlocal || !cutislocal); /*lint !e644*/
                   if( success )
                      strongcgsuccess = FALSE;
 
-                  SCIP_CALL( addCut(scip, sepadata, vars, c, maxdnom, maxscale, cutnnz, cutinds, cutcoefs, cutefficacy, cutrhs,
+                  SCIP_CALL( addCut(scip, sepadata, vars, c, maxdnom, maxscale, cutnnz, cutinds, cutcoefs, finalcut_eff, cutrhs,
                         cutislocal, cutrank, strongcgsuccess, &cutoff, &naddedcuts) );
-                  if( c >= 0 && cutefficacy > cutefficacies[i] )
+                  if( c >= 0 && finalcut_eff > cutefficacies[i] )
                   {
-                     cutefficacies[i] = cutefficacy;
+                     cutefficacies[i] = finalcut_eff;
                      colindsproducedcut[i] = c;
                   }
                }
