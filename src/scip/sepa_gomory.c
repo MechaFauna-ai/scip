@@ -771,12 +771,20 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpGomory)
        * asymmetric StrongCG / VBD-substituted MIR cuts (keeping only strictly better or newly found cuts)
        */
       if( depth == 0 && naddedcuts < maxsepacuts && !cutoff && !SCIPisExact(scip) && !SCIPisCertified(scip)
-         && ninds > 0 && ninds <= 200 )
+         && ((ninds > 0 && ninds <= 200) || (ninds == -1 && nrows <= 200)) )
       {
          int k;
 
-         for( k = 0; k < ninds; ++k )
-            binvrow[inds[k]] = -binvrow[inds[k]];
+         if( ninds > 0 )
+         {
+            for( k = 0; k < ninds; ++k )
+               binvrow[inds[k]] = -binvrow[inds[k]];
+         }
+         else
+         {
+            for( k = 0; k < nrows; ++k )
+               binvrow[k] = -binvrow[k];
+         }
 
          SCIP_CALL( SCIPaggrRowSumRows(scip, aggrrow, binvrow, inds, ninds,
             sepadata->sidetypebasis, allowlocal, SCIPallowNegSlack(scip) ? 2 : 0, (int) MAXAGGRLEN(nvars), &success) );
