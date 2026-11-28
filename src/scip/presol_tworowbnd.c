@@ -71,7 +71,11 @@
 #define PRESOL_NAME                    "tworowbnd"
 #define PRESOL_DESC                    "do bound tigthening by using two rows"
 #define PRESOL_PRIORITY                -2000    /**< priority of the presolver (>= 0: before, < 0: after constraint handlers); combined with propagators */
+#if SCIP_HAS_PAPILO
 #define PRESOL_MAXROUNDS               0        /**< maximal number of presolving rounds the presolver participates in (-1: no limit) */
+#else
+#define PRESOL_MAXROUNDS              -1        /**< maximal number of presolving rounds the presolver participates in (-1: no limit) */
+#endif
 #define PRESOL_TIMING                  SCIP_PRESOLTIMING_EXHAUSTIVE /* timing of the presolver (fast, medium, or exhaustive) */
 
 #define DEFAULT_ENABLECOPY             TRUE     /**< should tworowbnd presolver be copied to sub-SCIPs? */
