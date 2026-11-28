@@ -47,6 +47,9 @@
 
 /*---+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8----+----9----+----0----+----1----+----2*/
 
+#include <stdint.h>
+#include <string.h>
+
 #include "blockmemshell/memory.h"
 #include "scip/presol_domcol.h"
 #include "scip/pub_matrix.h"
@@ -54,6 +57,7 @@
 #include "scip/pub_misc_sort.h"
 #include "scip/pub_presol.h"
 #include "scip/pub_var.h"
+#include "scip/scip_exact.h"
 #include "scip/scip_general.h"
 #include "scip/scip_mem.h"
 #include "scip/scip_message.h"
@@ -64,6 +68,7 @@
 #include "scip/scip_pricer.h"
 #include "scip/scip_prob.h"
 #include "scip/scip_probing.h"
+#include "scip/scip_solve.h"
 #include "scip/scip_var.h"
 
 
@@ -93,7 +98,17 @@ struct SCIP_PresolData
    int                   numcurrentpairs;    /**< current number of pair comparisons */
    SCIP_Bool             predbndstr;         /**< flag indicating if predictive bound strengthening should be applied */
    SCIP_Bool             continuousred;      /**< flag indicating if reductions for continuous variables should be performed */
+   SCIP_Bool             ranincompchains;    /**< has parallel binary chain pass already run on an incomplete matrix? */
 };
+
+/** candidate binary column entry for parallel-column symmetry chain detection */
+typedef struct
+{
+   uint64_t              hash;
+   int                   colidx;
+   int                   nnz;
+   int                   varindex;
+} PARBINCOL;
 
 /** type of fixing direction */
 enum Fixingdirection
@@ -2039,6 +2054,252 @@ SCIP_DECL_PRESOLFREE(presolFreeDomcol)
    return SCIP_OKAY;
 }
 
+static
+uint64_t mixHash64(
+   uint64_t              x
+   )
+{
+   x = (x ^ (x >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+   x = (x ^ (x >> 27)) * UINT64_C(0x94d049bb133111eb);
+   return x ^ (x >> 31);
+}
+
+static
+uint64_t doubleToBits(
+   SCIP_Real             v
+   )
+{
+   uint64_t bits = 0;
+
+   if( v == 0.0 )
+      v = 0.0;
+   memcpy(&bits, &v, sizeof(bits));
+   return bits;
+}
+
+static
+SCIP_DECL_SORTPTRCOMP(compParBinCol)
+{
+   const PARBINCOL* a = (const PARBINCOL*)elem1;
+   const PARBINCOL* b = (const PARBINCOL*)elem2;
+
+   if( a->hash < b->hash )
+      return -1;
+   if( a->hash > b->hash )
+      return 1;
+   if( a->nnz < b->nnz )
+      return -1;
+   if( a->nnz > b->nnz )
+      return 1;
+   if( a->varindex < b->varindex )
+      return -1;
+   if( a->varindex > b->varindex )
+      return 1;
+   return 0;
+}
+
+/** checks whether two binary columns in matrix are exact copies with equal objective */
+static
+SCIP_Bool areExactIdenticalBinCols(
+   SCIP*                 scip,
+   SCIP_MATRIX*          matrix,
+   int                   col1,
+   int                   col2
+   )
+{
+   SCIP_VAR* v1 = SCIPmatrixGetVar(matrix, col1);
+   SCIP_VAR* v2 = SCIPmatrixGetVar(matrix, col2);
+   int nnz1 = SCIPmatrixGetColNNonzs(matrix, col1);
+   int nnz2 = SCIPmatrixGetColNNonzs(matrix, col2);
+   const int* rows1;
+   const int* rows2;
+   const SCIP_Real* vals1;
+   const SCIP_Real* vals2;
+   int k;
+
+   if( nnz1 != nnz2 )
+      return FALSE;
+   if( !SCIPisEQ(scip, SCIPvarGetObj(v1), SCIPvarGetObj(v2)) )
+      return FALSE;
+
+   rows1 = SCIPmatrixGetColIdxPtr(matrix, col1);
+   rows2 = SCIPmatrixGetColIdxPtr(matrix, col2);
+   vals1 = SCIPmatrixGetColValPtr(matrix, col1);
+   vals2 = SCIPmatrixGetColValPtr(matrix, col2);
+
+   for( k = 0; k < nnz1; ++k )
+   {
+      if( rows1[k] != rows2[k] || !SCIPisEQ(scip, vals1[k], vals2[k]) )
+         return FALSE;
+   }
+   return TRUE;
+}
+
+/** collects symmetry-breaking ordering pairs (hi >= lo) for classes of exact identical binary columns
+ *  that have no lock conflicts, no conflict locks, and no external cliques, implications, or variable bounds
+ */
+static
+SCIP_RETCODE collectParallelBinChainPairs(
+   SCIP*                 scip,
+   SCIP_MATRIX*          matrix,
+   const FIXINGDIRECTION* varstofix,
+   SCIP_VAR**            hivars,
+   SCIP_VAR**            lovars,
+   int                   maxpairs,
+   int*                  npairs
+   )
+{
+   int ncols = SCIPmatrixGetNColumns(matrix);
+   PARBINCOL* cands;
+   PARBINCOL** candptrs;
+   SCIP_Bool* grouped;
+   int ncands = 0;
+   int v;
+   int i;
+
+   *npairs = 0;
+
+   SCIP_CALL( SCIPallocBufferArray(scip, &cands, ncols) );
+   SCIP_CALL( SCIPallocBufferArray(scip, &candptrs, ncols) );
+
+   for( v = 0; v < ncols; ++v )
+   {
+      SCIP_VAR* var = SCIPmatrixGetVar(matrix, v);
+      int nnz;
+      const int* rows;
+      const SCIP_Real* vals;
+      uint64_t h;
+      int k;
+
+      if( varstofix != NULL && varstofix[v] != NOFIX )
+         continue;
+      if( !SCIPvarIsActive(var) || !SCIPvarIsBinary(var) )
+         continue;
+      if( SCIPvarGetLbGlobal(var) > 0.5 || SCIPvarGetUbGlobal(var) < 0.5 )
+         continue;
+      if( SCIPmatrixUplockConflict(matrix, v) || SCIPmatrixDownlockConflict(matrix, v) )
+         continue;
+      if( SCIPvarGetNLocksUpType(var, SCIP_LOCKTYPE_CONFLICT) > 0
+         || SCIPvarGetNLocksDownType(var, SCIP_LOCKTYPE_CONFLICT) > 0 )
+         continue;
+      if( SCIPvarGetNCliques(var, FALSE) > 0 || SCIPvarGetNCliques(var, TRUE) > 0
+         || SCIPvarGetNImpls(var, FALSE) > 0 || SCIPvarGetNImpls(var, TRUE) > 0
+         || SCIPvarGetNVlbs(var) > 0 || SCIPvarGetNVubs(var) > 0 )
+         continue;
+
+      nnz = SCIPmatrixGetColNNonzs(matrix, v);
+      if( nnz <= 0 )
+         continue;
+
+      rows = SCIPmatrixGetColIdxPtr(matrix, v);
+      vals = SCIPmatrixGetColValPtr(matrix, v);
+      h = mixHash64((uint64_t)nnz ^ mixHash64(doubleToBits(SCIPvarGetObj(var))));
+      for( k = 0; k < nnz; ++k )
+         h += mixHash64(((uint64_t)(uint32_t)rows[k] << 32) ^ doubleToBits(vals[k]));
+
+      cands[ncands].hash = h;
+      cands[ncands].colidx = v;
+      cands[ncands].nnz = nnz;
+      cands[ncands].varindex = SCIPvarGetIndex(var);
+      candptrs[ncands] = &cands[ncands];
+      ++ncands;
+   }
+
+   if( ncands < 2 )
+   {
+      SCIPfreeBufferArray(scip, &candptrs);
+      SCIPfreeBufferArray(scip, &cands);
+      return SCIP_OKAY;
+   }
+
+   SCIPsortPtr((void**)candptrs, compParBinCol, ncands);
+   SCIP_CALL( SCIPallocClearBufferArray(scip, &grouped, ncands) );
+
+   i = 0;
+   while( i < ncands && *npairs < maxpairs )
+   {
+      int bstart = i;
+      int bend = i + 1;
+      int a;
+
+      while( bend < ncands && candptrs[bend]->hash == candptrs[bstart]->hash
+         && candptrs[bend]->nnz == candptrs[bstart]->nnz )
+         ++bend;
+
+      if( bend - bstart >= 2 )
+      {
+         for( a = bstart; a < bend && *npairs < maxpairs; ++a )
+         {
+            int prevcol;
+            int b;
+
+            if( grouped[a] )
+               continue;
+            grouped[a] = TRUE;
+            prevcol = candptrs[a]->colidx;
+
+            for( b = a + 1; b < bend && *npairs < maxpairs; ++b )
+            {
+               int curcol;
+
+               if( grouped[b] )
+                  continue;
+               curcol = candptrs[b]->colidx;
+               if( areExactIdenticalBinCols(scip, matrix, prevcol, curcol) )
+               {
+                  grouped[b] = TRUE;
+                  hivars[*npairs] = SCIPmatrixGetVar(matrix, prevcol);
+                  lovars[*npairs] = SCIPmatrixGetVar(matrix, curcol);
+                  (*npairs)++;
+                  prevcol = curcol;
+               }
+            }
+         }
+      }
+
+      i = bend;
+   }
+
+   SCIPfreeBufferArray(scip, &grouped);
+   SCIPfreeBufferArray(scip, &candptrs);
+   SCIPfreeBufferArray(scip, &cands);
+
+   return SCIP_OKAY;
+}
+
+static
+SCIP_Bool allowParBinSym(
+   SCIP*                 scip
+   )
+{
+   SCIP_PARAM* param;
+
+   if( SCIPgetNBinVars(scip) < 2 || SCIPisReoptEnabled(scip)
+      || SCIPisNLPEnabled(scip) || SCIPgetNActivePricers(scip) > 0
+      || SCIPisExact(scip) || SCIPisCertified(scip) )
+      return FALSE;
+
+   param = SCIPgetParam(scip, "misc/usesymmetry");
+   if( param != NULL && SCIPparamGetInt(param) == 0 )
+      return FALSE;
+
+   return TRUE;
+}
+
+/** initialization method of presolver (called after problem was transformed) */
+static
+SCIP_DECL_PRESOLINIT(presolInitDomcol)
+{  /*lint --e{715}*/
+   SCIP_PRESOLDATA* presoldata;
+
+   assert(presol != NULL);
+   presoldata = SCIPpresolGetData(presol);
+   assert(presoldata != NULL);
+   presoldata->ranincompchains = FALSE;
+
+   return SCIP_OKAY;
+}
+
 /** execution method of presolver */
 static
 SCIP_DECL_PRESOLEXEC(presolExecDomcol)
@@ -2107,7 +2368,65 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
    }
 
    if( !initialized )
+   {
+      /* even when non-linear/AND constraints prevent a complete matrix, detect exact identical binary columns
+       * whose model locks are completely represented in the linear matrix (once per transformed problem)
+       */
+      if( !presoldata->ranincompchains && allowParBinSym(scip) )
+      {
+         presoldata->ranincompchains = TRUE;
+         SCIP_CALL( SCIPmatrixCreate(scip, &matrix, FALSE, &initialized, &complete, &infeasible,
+            naddconss, ndelconss, nchgcoefs, nchgbds, nfixedvars) );
+         if( infeasible )
+         {
+            if( initialized )
+               SCIPmatrixFree(scip, &matrix);
+            *result = SCIP_CUTOFF;
+            return SCIP_OKAY;
+         }
+         if( initialized )
+         {
+            int maxpairs = MIN(SCIPmatrixGetNColumns(matrix), 20000);
+            SCIP_VAR** hivars;
+            SCIP_VAR** lovars;
+            int npairs = 0;
+            int p;
+
+            SCIP_CALL( SCIPallocBufferArray(scip, &hivars, maxpairs) );
+            SCIP_CALL( SCIPallocBufferArray(scip, &lovars, maxpairs) );
+            SCIP_CALL( collectParallelBinChainPairs(scip, matrix, NULL, hivars, lovars, maxpairs, &npairs) );
+            SCIPmatrixFree(scip, &matrix);
+
+            for( p = 0; p < npairs; ++p )
+            {
+               SCIP_VAR* clqvars[2];
+               SCIP_Bool clqvals[2];
+               int clqbdchgs = 0;
+
+               if( !SCIPvarIsActive(hivars[p]) || !SCIPvarIsActive(lovars[p]) )
+                  continue;
+               clqvars[0] = lovars[p];
+               clqvals[0] = TRUE;
+               clqvars[1] = hivars[p];
+               clqvals[1] = FALSE;
+               SCIP_CALL( SCIPaddClique(scip, clqvars, clqvals, 2, FALSE, &infeasible, &clqbdchgs) );
+               if( clqbdchgs > 0 )
+                  (*nchgbds) += clqbdchgs;
+               if( infeasible )
+               {
+                  *result = SCIP_CUTOFF;
+                  break;
+               }
+            }
+            if( npairs > 0 && *result != SCIP_CUTOFF )
+               *result = SCIP_SUCCESS;
+
+            SCIPfreeBufferArray(scip, &lovars);
+            SCIPfreeBufferArray(scip, &hivars);
+         }
+      }
       return SCIP_OKAY;
+   }
 
    nfixings = 0;
    ndomrelations = 0;
@@ -2461,7 +2780,56 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
    }
 #endif
 
-   SCIPmatrixFree(scip, &matrix);
+   /* collect symmetry-breaking ordering chains for exact identical binary columns before freeing matrix */
+   {
+      SCIP_VAR** chainhi = NULL;
+      SCIP_VAR** chainlo = NULL;
+      int nchainpairs = 0;
+
+      if( *result != SCIP_CUTOFF && allowParBinSym(scip) )
+      {
+         int maxpairs = MIN(ncols, 20000);
+         SCIP_CALL( SCIPallocBufferArray(scip, &chainhi, maxpairs) );
+         SCIP_CALL( SCIPallocBufferArray(scip, &chainlo, maxpairs) );
+         SCIP_CALL( collectParallelBinChainPairs(scip, matrix, NULL, chainhi, chainlo, maxpairs, &nchainpairs) );
+      }
+
+      SCIPmatrixFree(scip, &matrix);
+
+      if( nchainpairs > 0 )
+      {
+         int p;
+         int nadded = 0;
+
+         for( p = 0; p < nchainpairs; ++p )
+         {
+            SCIP_VAR* clqvars[2];
+            SCIP_Bool clqvals[2];
+            int clqbdchgs = 0;
+
+            if( !SCIPvarIsActive(chainhi[p]) || !SCIPvarIsActive(chainlo[p]) )
+               continue;
+            clqvars[0] = chainlo[p];
+            clqvals[0] = TRUE;
+            clqvars[1] = chainhi[p];
+            clqvals[1] = FALSE;
+            SCIP_CALL( SCIPaddClique(scip, clqvars, clqvals, 2, FALSE, &infeasible, &clqbdchgs) );
+            ++nadded;
+            if( clqbdchgs > 0 )
+               (*nchgbds) += clqbdchgs;
+            if( infeasible )
+            {
+               *result = SCIP_CUTOFF;
+               break;
+            }
+         }
+         if( nadded > 0 && *result != SCIP_CUTOFF )
+            *result = SCIP_SUCCESS;
+      }
+
+      SCIPfreeBufferArrayNull(scip, &chainlo);
+      SCIPfreeBufferArrayNull(scip, &chainhi);
+   }
 
    return SCIP_OKAY;
 }
@@ -2486,6 +2854,7 @@ SCIP_RETCODE SCIPincludePresolDomcol(
          PRESOL_TIMING, presolExecDomcol, presoldata) );
    SCIP_CALL( SCIPsetPresolCopy(scip, presol, presolCopyDomcol) );
    SCIP_CALL( SCIPsetPresolFree(scip, presol, presolFreeDomcol) );
+   SCIP_CALL( SCIPsetPresolInit(scip, presol, presolInitDomcol) );
 
    SCIP_CALL( SCIPaddIntParam(scip,
          "presolving/domcol/numminpairs",
