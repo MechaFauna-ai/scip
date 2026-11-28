@@ -2120,7 +2120,7 @@ SCIP_Bool areExactIdenticalBinCols(
 
    if( nnz1 != nnz2 )
       return FALSE;
-   if( !SCIPisEQ(scip, SCIPvarGetObj(v1), SCIPvarGetObj(v2)) )
+   if( SCIPvarGetObj(v1) != SCIPvarGetObj(v2) ) /*lint !e777*/
       return FALSE;
 
    rows1 = SCIPmatrixGetColIdxPtr(matrix, col1);
@@ -2130,7 +2130,7 @@ SCIP_Bool areExactIdenticalBinCols(
 
    for( k = 0; k < nnz1; ++k )
    {
-      if( rows1[k] != rows2[k] || !SCIPisEQ(scip, vals1[k], vals2[k]) )
+      if( rows1[k] != rows2[k] || vals1[k] != vals2[k] ) /*lint !e777*/
          return FALSE;
    }
    return TRUE;
