@@ -89,6 +89,8 @@
 #define EVENTHDLR_NAME        "Redcostlns"
 #define EVENTHDLR_DESC        "LP event handler for " HEUR_NAME " heuristic"
 
+#define REDCOSTLNS_CALL(x)    do { if( (retcode = (x)) != SCIP_OKAY ) goto TERMINATE; } while( FALSE )
+
 struct SCIP_HeurData
 {
    SCIP_Real             minfixingrate;
@@ -162,69 +164,70 @@ SCIP_RETCODE solveSubscip(
    )
 {
    SCIP_VAR** vars;
-   SCIP_VAR** subvars;
-   SCIP_HASHMAP* varmapfw;
-   SCIP_EVENTHDLR* eventhdlr;
+   SCIP_VAR** subvars = NULL;
+   SCIP_HASHMAP* varmapfw = NULL;
+   SCIP_EVENTHDLR* eventhdlr = NULL;
    SCIP_Real allfixingrate;
    SCIP_Bool success;
-   SCIP_RETCODE retcode;
+   SCIP_Bool caughtevent = FALSE;
+   SCIP_RETCODE retcode = SCIP_OKAY;
+   SCIP_RETCODE subretcode;
    int nvars;
    int i;
 
-   SCIP_CALL( SCIPgetVarsData(scip, &vars, &nvars, NULL, NULL, NULL, NULL) );
-   SCIP_CALL( SCIPhashmapCreate(&varmapfw, SCIPblkmem(subscip), nvars) );
+   REDCOSTLNS_CALL( SCIPgetVarsData(scip, &vars, &nvars, NULL, NULL, NULL, NULL) );
+   REDCOSTLNS_CALL( SCIPhashmapCreate(&varmapfw, SCIPblkmem(subscip), nvars) );
 
-   SCIP_CALL( SCIPcopyLargeNeighborhoodSearch(scip, subscip, varmapfw, "redcostlns", fixedvars, fixedvals,
+   REDCOSTLNS_CALL( SCIPcopyLargeNeighborhoodSearch(scip, subscip, varmapfw, "redcostlns", fixedvars, fixedvals,
          nfixedvars, FALSE, heurdata->copycuts, &success, NULL) );
 
-   eventhdlr = NULL;
-   SCIP_CALL( SCIPincludeEventhdlrBasic(subscip, &eventhdlr, EVENTHDLR_NAME, EVENTHDLR_DESC,
+   REDCOSTLNS_CALL( SCIPincludeEventhdlrBasic(subscip, &eventhdlr, EVENTHDLR_NAME, EVENTHDLR_DESC,
          eventExecRedcostlns, NULL) );
    if( eventhdlr == NULL )
    {
-      SCIPhashmapFree(&varmapfw);
-      return SCIP_PLUGINNOTFOUND;
+      retcode = SCIP_PLUGINNOTFOUND;
+      goto TERMINATE;
    }
 
-   SCIP_CALL( SCIPallocBufferArray(scip, &subvars, nvars) );
+   REDCOSTLNS_CALL( SCIPallocBufferArray(scip, &subvars, nvars) );
    for( i = 0; i < nvars; ++i )
       subvars[i] = (SCIP_VAR*)SCIPhashmapGetImage(varmapfw, vars[i]);
    SCIPhashmapFree(&varmapfw);
 
-   SCIP_CALL( SCIPsetBoolParam(subscip, "misc/catchctrlc", FALSE) );
-   SCIP_CALL( SCIPsetIntParam(subscip, "display/verblevel", 0) );
-   SCIP_CALL( SCIPsetBoolParam(subscip, "timing/statistictiming", FALSE) );
+   REDCOSTLNS_CALL( SCIPsetBoolParam(subscip, "misc/catchctrlc", FALSE) );
+   REDCOSTLNS_CALL( SCIPsetIntParam(subscip, "display/verblevel", 0) );
+   REDCOSTLNS_CALL( SCIPsetBoolParam(subscip, "timing/statistictiming", FALSE) );
 
-   SCIP_CALL( SCIPcopyLimits(scip, subscip) );
+   REDCOSTLNS_CALL( SCIPcopyLimits(scip, subscip) );
    heurdata->nodelimit = (SCIP_Real)heurdata->maxnodes;
-   SCIP_CALL( SCIPsetLongintParam(subscip, "limits/stallnodes", heurdata->stallnodes) );
-   SCIP_CALL( SCIPsetLongintParam(subscip, "limits/nodes", heurdata->maxnodes) );
-   SCIP_CALL( SCIPsetSubscipsOff(subscip, TRUE) );
+   REDCOSTLNS_CALL( SCIPsetLongintParam(subscip, "limits/stallnodes", heurdata->stallnodes) );
+   REDCOSTLNS_CALL( SCIPsetLongintParam(subscip, "limits/nodes", heurdata->maxnodes) );
+   REDCOSTLNS_CALL( SCIPsetSubscipsOff(subscip, TRUE) );
 
-   SCIP_CALL( SCIPsetSeparating(subscip, SCIP_PARAMSETTING_OFF, TRUE) );
-   SCIP_CALL( SCIPsetPresolving(subscip, SCIP_PARAMSETTING_FAST, TRUE) );
+   REDCOSTLNS_CALL( SCIPsetSeparating(subscip, SCIP_PARAMSETTING_OFF, TRUE) );
+   REDCOSTLNS_CALL( SCIPsetPresolving(subscip, SCIP_PARAMSETTING_FAST, TRUE) );
 
    if( SCIPfindNodesel(subscip, "estimate") != NULL && !SCIPisParamFixed(subscip, "nodeselection/estimate/stdpriority") )
    {
-      SCIP_CALL( SCIPsetIntParam(subscip, "nodeselection/estimate/stdpriority", INT_MAX / 4) );
+      REDCOSTLNS_CALL( SCIPsetIntParam(subscip, "nodeselection/estimate/stdpriority", INT_MAX / 4) );
    }
    if( SCIPfindBranchrule(subscip, "inference") != NULL && !SCIPisParamFixed(subscip, "branching/inference/priority") )
    {
-      SCIP_CALL( SCIPsetIntParam(subscip, "branching/inference/priority", INT_MAX / 4) );
+      REDCOSTLNS_CALL( SCIPsetIntParam(subscip, "branching/inference/priority", INT_MAX / 4) );
    }
    if( !SCIPisParamFixed(subscip, "conflict/enable") )
    {
-      SCIP_CALL( SCIPsetBoolParam(subscip, "conflict/enable", TRUE) );
+      REDCOSTLNS_CALL( SCIPsetBoolParam(subscip, "conflict/enable", TRUE) );
    }
    if( !SCIPisParamFixed(subscip, "conflict/useboundlp") )
    {
-      SCIP_CALL( SCIPsetCharParam(subscip, "conflict/useboundlp", 'o') );
+      REDCOSTLNS_CALL( SCIPsetCharParam(subscip, "conflict/useboundlp", 'o') );
    }
    if( !SCIPisParamFixed(subscip, "conflict/maxstoresize") )
    {
-      SCIP_CALL( SCIPsetIntParam(subscip, "conflict/maxstoresize", 100) );
+      REDCOSTLNS_CALL( SCIPsetIntParam(subscip, "conflict/maxstoresize", 100) );
    }
-   SCIP_CALL( SCIPsetBoolParam(subscip, "lp/checkdualfeas", FALSE) );
+   REDCOSTLNS_CALL( SCIPsetBoolParam(subscip, "lp/checkdualfeas", FALSE) );
 
    if( SCIPgetNSols(scip) > 0 )
    {
@@ -240,12 +243,17 @@ SCIP_RETCODE solveSubscip(
             : (1.0 + heurdata->minimprove) * SCIPgetUpperbound(scip);
 
       cutoff = MIN(upperbound, cutoff);
-      SCIP_CALL( SCIPsetObjlimit(subscip, cutoff) );
+      REDCOSTLNS_CALL( SCIPsetObjlimit(subscip, cutoff) );
    }
 
-   retcode = SCIPpresolve(subscip);
-   if( retcode != SCIP_OKAY )
+   subretcode = SCIPpresolve(subscip);
+   if( subretcode != SCIP_OKAY )
+   {
+      SCIPwarningMessage(scip, "Error while presolving subproblem in %s heuristic; sub-SCIP terminated with code <%d>\n",
+         HEUR_NAME, subretcode);
+      SCIPABORT();  /*lint --e{527}*/
       goto TERMINATE;
+   }
 
    allfixingrate = (SCIPgetNOrigVars(subscip) > 0)
       ? (SCIPgetNOrigVars(subscip) - SCIPgetNVars(subscip)) / (SCIP_Real)SCIPgetNOrigVars(subscip)
@@ -257,15 +265,22 @@ SCIP_RETCODE solveSubscip(
       SCIP_SOL** subsols;
       int nsubsols;
 
-      SCIP_CALL( SCIPtransformProb(subscip) );
-      SCIP_CALL( SCIPcatchEvent(subscip, SCIP_EVENTTYPE_LPSOLVED, eventhdlr, (SCIP_EVENTDATA*)heurdata, NULL) );
-      retcode = SCIPsolve(subscip);
-      SCIP_CALL( SCIPdropEvent(subscip, SCIP_EVENTTYPE_LPSOLVED, eventhdlr, (SCIP_EVENTDATA*)heurdata, -1) );
+      REDCOSTLNS_CALL( SCIPtransformProb(subscip) );
+      REDCOSTLNS_CALL( SCIPcatchEvent(subscip, SCIP_EVENTTYPE_LPSOLVED, eventhdlr, (SCIP_EVENTDATA*)heurdata, NULL) );
+      caughtevent = TRUE;
+      subretcode = SCIPsolve(subscip);
+      caughtevent = FALSE;
+      REDCOSTLNS_CALL( SCIPdropEvent(subscip, SCIP_EVENTTYPE_LPSOLVED, eventhdlr, (SCIP_EVENTDATA*)heurdata, -1) );
 
-      if( retcode != SCIP_OKAY )
+      if( subretcode != SCIP_OKAY )
+      {
+         SCIPwarningMessage(scip, "Error while solving subproblem in %s heuristic; sub-SCIP terminated with code <%d>\n",
+            HEUR_NAME, subretcode);
+         SCIPABORT();  /*lint --e{527}*/
          goto TERMINATE;
+      }
 
-      SCIP_CALL( SCIPmergeVariableStatistics(subscip, scip, subvars, vars, nvars) );
+      REDCOSTLNS_CALL( SCIPmergeVariableStatistics(subscip, scip, subvars, vars, nvars) );
 
       nsubsols = SCIPgetNSols(subscip);
       subsols = SCIPgetSols(subscip);
@@ -274,16 +289,24 @@ SCIP_RETCODE solveSubscip(
       {
          SCIP_SOL* newsol;
 
-         SCIP_CALL( SCIPtranslateSubSol(scip, subscip, subsols[i], heur, subvars, &newsol) );
-         SCIP_CALL( SCIPtrySolFree(scip, &newsol, FALSE, FALSE, TRUE, TRUE, TRUE, &success) );
+         REDCOSTLNS_CALL( SCIPtranslateSubSol(scip, subscip, subsols[i], heur, subvars, &newsol) );
+         REDCOSTLNS_CALL( SCIPtrySolFree(scip, &newsol, FALSE, FALSE, TRUE, TRUE, TRUE, &success) );
          if( success )
             *result = SCIP_FOUNDSOL;
       }
    }
 
 TERMINATE:
-   SCIPfreeBufferArray(scip, &subvars);
-   return SCIP_OKAY;
+   if( caughtevent )
+   {
+      SCIP_RETCODE dropret = SCIPdropEvent(subscip, SCIP_EVENTTYPE_LPSOLVED, eventhdlr, (SCIP_EVENTDATA*)heurdata, -1);
+      if( retcode == SCIP_OKAY )
+         retcode = dropret;
+   }
+   SCIPfreeBufferArrayNull(scip, &subvars);
+   if( varmapfw != NULL )
+      SCIPhashmapFree(&varmapfw);
+   return retcode;
 }
 
 static
@@ -318,15 +341,16 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
 {
    SCIP_HEURDATA* heurdata;
    SCIP_VAR** vars;
-   LURK_BOUND* lurk;
-   LURK_BOUND** lurkptrs;
-   SCIP_VAR** fixedvars;
-   SCIP_Real* fixedvals;
+   LURK_BOUND* lurk = NULL;
+   LURK_BOUND** lurkptrs = NULL;
+   SCIP_VAR** fixedvars = NULL;
+   SCIP_Real* fixedvals = NULL;
    SCIP_Real cutoffbound;
    SCIP_Real globallb;
    SCIP_Real liftedlb;
    SCIP_Bool canlift;
    SCIP_Bool success;
+   SCIP_RETCODE retcode = SCIP_OKAY;
    int nbinvars;
    int nintvars;
    int ntotalint;
@@ -364,10 +388,10 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
       return SCIP_OKAY;
 
    globallb = SCIPgetLocalLowerbound(scip);
-   canlift = heurdata->liftdualbound && !SCIPisExact(scip);
+   canlift = heurdata->liftdualbound && !SCIPisExact(scip) && SCIPallowStrongDualReds(scip);
 
-   SCIP_CALL( SCIPallocBufferArray(scip, &lurk, ntotalint) );
-   SCIP_CALL( SCIPallocBufferArray(scip, &lurkptrs, ntotalint) );
+   REDCOSTLNS_CALL( SCIPallocBufferArray(scip, &lurk, ntotalint) );
+   REDCOSTLNS_CALL( SCIPallocBufferArray(scip, &lurkptrs, ntotalint) );
    nlurk = 0;
 
    for( i = 0; i < ntotalint; ++i )
@@ -378,11 +402,12 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
       SCIP_Real rc;
       SCIP_Real rsol;
       SCIP_Real rlpobj;
+      SCIP_Real delta;
       SCIP_Real lcut;
       SCIP_Bool fixupper;
       SCIP_Real fixval;
 
-      if( SCIPisFeasEQ(scip, lb, ub) )
+      if( ub - lb < 0.5 )
          continue;
 
       rlpobj = SCIPvarGetBestRootLPObjval(var);
@@ -399,13 +424,19 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
 
       if( SCIPisDualfeasPositive(scip, rc) && !SCIPisInfinity(scip, -lb) && SCIPisFeasEQ(scip, rsol, lb) )
       {
-         lcut = rlpobj + rc;
+         delta = MIN(1.0, (lb + 1.0) - rsol);
+         if( delta <= 0.5 )
+            continue;
+         lcut = rlpobj + rc * delta;
          fixupper = TRUE;
          fixval = lb;
       }
       else if( SCIPisDualfeasNegative(scip, rc) && !SCIPisInfinity(scip, ub) && SCIPisFeasEQ(scip, rsol, ub) )
       {
-         lcut = rlpobj - rc;
+         delta = MIN(1.0, rsol - (ub - 1.0));
+         if( delta <= 0.5 )
+            continue;
+         lcut = rlpobj - rc * delta;
          fixupper = FALSE;
          fixval = ub;
       }
@@ -424,23 +455,19 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
    }
 
    if( (SCIP_Real)nlurk < heurdata->minlurkratio * (SCIP_Real)ntotalint )
-   {
-      SCIPfreeBufferArray(scip, &lurkptrs);
-      SCIPfreeBufferArray(scip, &lurk);
-      return SCIP_OKAY;
-   }
+      goto TERMINATE;
 
    *result = SCIP_DIDNOTFIND;
    SCIPsortPtr((void**)lurkptrs, compLurkDesc, nlurk);
 
-   SCIP_CALL( SCIPallocBufferArray(scip, &fixedvars, ntotalint) );
-   SCIP_CALL( SCIPallocBufferArray(scip, &fixedvals, ntotalint) );
+   REDCOSTLNS_CALL( SCIPallocBufferArray(scip, &fixedvars, ntotalint) );
+   REDCOSTLNS_CALL( SCIPallocBufferArray(scip, &fixedvals, ntotalint) );
    nfixedvars = 0;
    nfixedint = 0;
    liftedlb = globallb;
 
    /* propagate sorted lurking fixings in probing mode */
-   SCIP_CALL( SCIPstartProbing(scip) );
+   REDCOSTLNS_CALL( SCIPstartProbing(scip) );
 
    for( i = 0; i < nlurk && !SCIPisStopped(scip); ++i )
    {
@@ -456,9 +483,9 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
 
       if( lbnd->fixupper )
       {
-         if( SCIPisFeasLE(scip, currub, lbnd->fixval) )
+         if( currub <= lbnd->fixval + 0.5 )
             continue;
-         if( SCIPisFeasGT(scip, currlb, lbnd->fixval) )
+         if( currlb > lbnd->fixval + 0.5 )
          {
             /* direct contradiction with previously propagated bounds */
             if( canlift )
@@ -472,9 +499,9 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
       }
       else
       {
-         if( SCIPisFeasGE(scip, currlb, lbnd->fixval) )
+         if( currlb >= lbnd->fixval - 0.5 )
             continue;
-         if( SCIPisFeasLT(scip, currub, lbnd->fixval) )
+         if( currub < lbnd->fixval - 0.5 )
          {
             if( canlift )
             {
@@ -486,19 +513,22 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
          }
       }
 
+      if( SCIPgetDepth(scip) >= SCIP_MAXTREEDEPTH )
+         break;
+
       pdepth = SCIPgetProbingDepth(scip);
-      SCIP_CALL( SCIPnewProbingNode(scip) );
+      REDCOSTLNS_CALL( SCIPnewProbingNode(scip) );
 
       if( lbnd->fixupper )
       {
-         SCIP_CALL( SCIPchgVarUbProbing(scip, var, lbnd->fixval) );
+         REDCOSTLNS_CALL( SCIPchgVarUbProbing(scip, var, lbnd->fixval) );
       }
       else
       {
-         SCIP_CALL( SCIPchgVarLbProbing(scip, var, lbnd->fixval) );
+         REDCOSTLNS_CALL( SCIPchgVarLbProbing(scip, var, lbnd->fixval) );
       }
 
-      SCIP_CALL( SCIPpropagateProbing(scip, 2, &cutoff, NULL) );
+      REDCOSTLNS_CALL( SCIPpropagateProbing(scip, 2, &cutoff, NULL) );
       if( cutoff )
       {
          if( canlift )
@@ -507,7 +537,7 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
             if( safelb > liftedlb && safelb < cutoffbound )
                liftedlb = safelb;
          }
-         SCIP_CALL( SCIPbacktrackProbing(scip, pdepth) );
+         REDCOSTLNS_CALL( SCIPbacktrackProbing(scip, pdepth) );
          break;
       }
 
@@ -519,7 +549,7 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
 
          for( k = 0; k < ntotalint; ++k )
          {
-            if( SCIPisFeasEQ(scip, SCIPvarGetLbLocal(vars[k]), SCIPvarGetUbLocal(vars[k])) )
+            if( SCIPvarGetUbLocal(vars[k]) - SCIPvarGetLbLocal(vars[k]) < 0.5 )
                ++cnt;
          }
          if( (SCIP_Real)cnt >= heurdata->targetfixrate * (SCIP_Real)ntotalint )
@@ -533,10 +563,10 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
       SCIP_Real llb = SCIPvarGetLbLocal(vars[i]);
       SCIP_Real lub = SCIPvarGetUbLocal(vars[i]);
 
-      if( SCIPisFeasEQ(scip, llb, lub) )
+      if( lub - llb < 0.5 )
       {
          ++nfixedint;
-         if( !SCIPisFeasEQ(scip, SCIPvarGetLbGlobal(vars[i]), SCIPvarGetUbGlobal(vars[i])) )
+         if( SCIPvarGetUbGlobal(vars[i]) - SCIPvarGetLbGlobal(vars[i]) >= 0.5 )
          {
             fixedvars[nfixedvars] = vars[i];
             fixedvals[nfixedvars] = SCIPfeasFloor(scip, llb + 0.5);
@@ -545,37 +575,44 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
       }
    }
 
-   SCIP_CALL( SCIPendProbing(scip) );
+   REDCOSTLNS_CALL( SCIPendProbing(scip) );
 
    /* apply any proven global root dual bound lift */
    if( canlift && liftedlb > globallb + SCIPfeastol(scip) && liftedlb < cutoffbound )
    {
-      SCIP_CALL( SCIPupdateLocalLowerbound(scip, liftedlb) );
+      REDCOSTLNS_CALL( SCIPupdateLocalLowerbound(scip, liftedlb) );
    }
 
    /* solve fast LNS sub-MIP if fixing rate is sufficient */
    if( nfixedvars > 0 && (SCIP_Real)nfixedint >= heurdata->minfixingrate * (SCIP_Real)ntotalint
       && !SCIPisStopped(scip) && SCIPisLT(scip, SCIPgetLocalLowerbound(scip), SCIPgetCutoffbound(scip)) )
    {
-      SCIP_CALL( SCIPcheckCopyLimits(scip, &success) );
+      REDCOSTLNS_CALL( SCIPcheckCopyLimits(scip, &success) );
       if( success )
       {
          SCIP* subscip;
-         SCIP_RETCODE retcode;
+         SCIP_RETCODE subret;
 
-         SCIP_CALL( SCIPcreate(&subscip) );
-         retcode = solveSubscip(scip, subscip, heur, heurdata, fixedvars, fixedvals, nfixedvars, result);
-         SCIP_CALL( SCIPfree(&subscip) );
-         SCIP_CALL( retcode );
+         REDCOSTLNS_CALL( SCIPcreate(&subscip) );
+         subret = solveSubscip(scip, subscip, heur, heurdata, fixedvars, fixedvals, nfixedvars, result);
+         REDCOSTLNS_CALL( SCIPfree(&subscip) );
+         REDCOSTLNS_CALL( subret );
       }
    }
 
-   SCIPfreeBufferArray(scip, &fixedvals);
-   SCIPfreeBufferArray(scip, &fixedvars);
-   SCIPfreeBufferArray(scip, &lurkptrs);
-   SCIPfreeBufferArray(scip, &lurk);
+TERMINATE:
+   if( SCIPinProbing(scip) )
+   {
+      SCIP_RETCODE endret = SCIPendProbing(scip);
+      if( retcode == SCIP_OKAY )
+         retcode = endret;
+   }
+   SCIPfreeBufferArrayNull(scip, &fixedvals);
+   SCIPfreeBufferArrayNull(scip, &fixedvars);
+   SCIPfreeBufferArrayNull(scip, &lurkptrs);
+   SCIPfreeBufferArrayNull(scip, &lurk);
 
-   return SCIP_OKAY;
+   return retcode;
 }
 
 /** creates the root reduced-cost LNS primal heuristic and includes it in SCIP */
