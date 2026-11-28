@@ -900,7 +900,8 @@ SCIP_RETCODE applyProbing(
             int effmaxfixings = maxfixings;
 
             if( maxfixings < INT_MAX && SCIPgetStage(scip) == SCIP_STAGE_PRESOLVING
-               && nprobedthiscall > 0 && propdata->nuseless < 10 && nfound * 4 >= nprobedthiscall )
+               && nprobedthiscall > 0 && propdata->nuseless < 10
+               && (SCIP_Longint)nfound * 4 >= (SCIP_Longint)nprobedthiscall )
             {
                effmaxfixings = (maxfixings <= INT_MAX / 40) ? 40 * maxfixings : INT_MAX;
             }
