@@ -1277,6 +1277,10 @@ SCIP_RETCODE execRelpscost(
       SCIP_Real* scores = NULL;
       SCIP_Real* scoresfrompc = NULL;
       SCIP_Real* scoresfromothers = NULL;
+      SCIP_VAR** minevars = NULL;
+      SCIP_Real* minesols = NULL;
+      SCIP_Bool* minedown = NULL;
+      SCIP_Bool* mineup = NULL;
       int* bdchginds;
       SCIP_BOUNDTYPE* bdchgtypes;
       SCIP_Real* bdchgbounds;
@@ -1781,6 +1785,21 @@ SCIP_RETCODE execRelpscost(
       bestuninitsbcand = -1;
       lookahead = 0.0;
 
+      if( propagate && ninitcands > 1 && !exactsolve && !useancpscost )
+      {
+         int k;
+
+         SCIP_CALL( SCIPallocBufferArray(scip, &minevars, ninitcands) );
+         SCIP_CALL( SCIPallocBufferArray(scip, &minesols, ninitcands) );
+         SCIP_CALL( SCIPallocClearBufferArray(scip, &minedown, ninitcands) );
+         SCIP_CALL( SCIPallocClearBufferArray(scip, &mineup, ninitcands) );
+         for( k = 0; k < ninitcands; ++k )
+         {
+            minevars[k] = branchcands[initcands[k]];
+            minesols[k] = branchcandssol[initcands[k]];
+         }
+      }
+
       for( i = 0; continueStrongBranchingLookahead(scip, i, ninitcands, lookahead, maxlookahead, nbdchgs, nbdconflicts, maxbdchgs, maxnsblpiterations) && continueStrongBranchingTreeSizeEstimation(scip, branchruledata, lookahead, maxlookahead); ++i )
       {
          SCIP_Real down;
@@ -1796,10 +1815,35 @@ SCIP_RETCODE execRelpscost(
          SCIP_Bool upinf;
          SCIP_Bool downconflict;
          SCIP_Bool upconflict;
+         int oldnbdchgs = nbdchgs;
 
          /* get candidate number to initialize */
          c = initcands[i];
          assert(!SCIPisFeasIntegral(scip, branchcandssol[c]) || SCIPisExact(scip));
+
+         /* skip candidate if earlier degenerate strong-branching LPs at this node already proved 0-gain in both
+          * directions, local SB inference scoring and treemodel are not enabled, the candidate's current local bounds
+          * still permit both floor and ceil branches, and its live zero-gain branching score strictly trails the best
+          */
+         if( minedown != NULL && minedown[i] && mineup[i] && !branchruledata->usesblocalinfo
+            && !SCIPtreemodelIsEnabled(scip, branchruledata->treemodel)
+            && (bestsbcand != -1 || bestpscand != -1)
+            && SCIPisFeasLE(scip, SCIPvarGetLbLocal(branchcands[c]), SCIPfeasFloor(scip, branchcandssol[c]))
+            && SCIPisFeasGE(scip, SCIPvarGetUbLocal(branchcands[c]), SCIPfeasCeil(scip, branchcandssol[c])) )
+         {
+            SCIP_Real zerogainscore = calcScore(scip, branchruledata,
+               SCIPgetVarConflictScore(scip, branchcands[c]), avgconflictscore,
+               SCIPgetVarConflictlengthScore(scip, branchcands[c]), avgconflengthscore,
+               SCIPgetVarAvgInferenceScore(scip, branchcands[c]), avginferencescore,
+               SCIPgetVarAvgCutoffScore(scip, branchcands[c]), avgcutoffscore,
+               SCIPgetVarAvgGMIScore(scip, branchcands[c]), SCIPgetVarLastGMIScore(scip, branchcands[c]),
+               SCIPgetBranchScore(scip, branchcands[c], 0.0, 0.0), avgpscostscore,
+               calcNlscore(scip, branchruledata->nlcount, branchruledata->nlcountmax, SCIPvarGetProbindex(branchcands[c])),
+               branchcandsfrac[c], degeneracyfactor);
+
+            if( SCIPisSumLT(scip, zerogainscore, MAX(bestsbscore, bestpsscore)) )
+               continue;
+         }
 
          if( branchruledata->skipbadinitcands )
          {
@@ -1876,10 +1920,27 @@ SCIP_RETCODE execRelpscost(
 
          if( propagate )
          {
-            /* apply strong branching */
-            SCIP_CALL( SCIPgetVarStrongbranchWithPropagation(scip, branchcands[c], branchcandssol[c], lpobjval, inititer,
-                  branchruledata->maxproprounds, &down, &up, &downvalid, &upvalid, &ndomredsdown, &ndomredsup, &downinf, &upinf,
-                  &downconflict, &upconflict, &lperror, newlbs, newubs) );
+            /* candidate i is being strong-branched directly; clear any prior mined flags to avoid double-counting */
+            if( minevars != NULL )
+            {
+               minedown[i] = FALSE;
+               mineup[i] = FALSE;
+            }
+
+            /* apply strong branching (mining zero-gain observations for remaining candidates on degenerate LPs) */
+            if( minevars != NULL && i + 1 < ninitcands )
+            {
+               SCIP_CALL( SCIPgetVarStrongbranchWithPropagationMining(scip, branchcands[c], branchcandssol[c], lpobjval, inititer,
+                     branchruledata->maxproprounds, &down, &up, &downvalid, &upvalid, &ndomredsdown, &ndomredsup, &downinf, &upinf,
+                     &downconflict, &upconflict, &lperror, newlbs, newubs,
+                     &minevars[i+1], &minesols[i+1], ninitcands - i - 1, &minedown[i+1], &mineup[i+1]) );
+            }
+            else
+            {
+               SCIP_CALL( SCIPgetVarStrongbranchWithPropagation(scip, branchcands[c], branchcandssol[c], lpobjval, inititer,
+                     branchruledata->maxproprounds, &down, &up, &downvalid, &upvalid, &ndomredsdown, &ndomredsup, &downinf, &upinf,
+                     &downconflict, &upconflict, &lperror, newlbs, newubs) );
+            }
          }
          else
          {
@@ -2157,6 +2218,19 @@ SCIP_RETCODE execRelpscost(
                SCIPvarGetName(branchcands[c]), branchcandssol[c], down, downgain, downvalid, up, upgain, upvalid,
                pscostscore, conflictscore, conflengthscore, inferencescore, cutoffscore, gmieffscore, score);
          }
+
+         /* if this strong-branching call tightened bounds at the node, invalidate prior mined zero-gain witnesses
+          * for remaining candidates since earlier LP solutions may no longer be feasible in the tightened domain
+          */
+         if( minevars != NULL && nbdchgs > oldnbdchgs )
+         {
+            int k;
+            for( k = i + 1; k < ninitcands; ++k )
+            {
+               minedown[k] = FALSE;
+               mineup[k] = FALSE;
+            }
+         }
       }
 #ifdef SCIP_DEBUG
       if( bestsbcand >= 0 )
@@ -2166,6 +2240,31 @@ SCIP_RETCODE execRelpscost(
             lookahead, maxlookahead);
       }
 #endif
+
+      if( minevars != NULL )
+      {
+         int k;
+
+         for( k = 0; k < ninitcands; ++k )
+         {
+            int mc = initcands[k];
+
+            if( minedown[k] && SCIPgetVarPseudocostCountCurrentRun(scip, branchcands[mc], SCIP_BRANCHDIR_DOWNWARDS) < reliable )
+            {
+               SCIP_CALL( SCIPupdateVarPseudocostSymmetric(scip, branchruledata, branchcands[mc], branchorbitidx, mc,
+                     0.0 - branchcandsfrac[mc], 0.0, 1.0) );
+            }
+            if( mineup[k] && SCIPgetVarPseudocostCountCurrentRun(scip, branchcands[mc], SCIP_BRANCHDIR_UPWARDS) < reliable )
+            {
+               SCIP_CALL( SCIPupdateVarPseudocostSymmetric(scip, branchruledata, branchcands[mc], branchorbitidx, mc,
+                     1.0 - branchcandsfrac[mc], 0.0, 1.0) );
+            }
+         }
+         SCIPfreeBufferArray(scip, &mineup);
+         SCIPfreeBufferArray(scip, &minedown);
+         SCIPfreeBufferArray(scip, &minesols);
+         SCIPfreeBufferArray(scip, &minevars);
+      }
 
       if( initstrongbranching )
       {

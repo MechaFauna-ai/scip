@@ -3877,6 +3877,12 @@ SCIP_RETCODE performStrongbranchWithPropagation(
    int                   nvars,              /**< number of active problem variables */
    SCIP_Real*            newlbs,             /**< array to store valid lower bounds for all active variables, or NULL */
    SCIP_Real*            newubs,             /**< array to store valid upper bounds for all active variables, or NULL */
+   SCIP_Real             lpobjval,           /**< parent LP objective value for zero-gain mining */
+   SCIP_VAR**            minecands,          /**< candidate variables to inspect on degenerate zero-gain probing LPs, or NULL */
+   const SCIP_Real*      minecandssol,       /**< parent LP solution values of minecands, or NULL */
+   int                   nminecands,         /**< number of entries in minecands */
+   SCIP_Bool*            minedown,           /**< flags set to TRUE when down zero-gain is observed, or NULL */
+   SCIP_Bool*            mineup,             /**< flags set to TRUE when up zero-gain is observed, or NULL */
    SCIP_Bool*            foundsol,           /**< pointer to store whether a primal solution was found during strong branching */
    SCIP_Bool*            cutoff              /**< pointer to store whether the strong branching child is infeasible */
    )
@@ -4045,6 +4051,33 @@ SCIP_RETCODE performStrongbranchWithPropagation(
 
             /* check the strong branching LP solution for feasibility */
             SCIP_CALL( SCIPtryStrongbranchLPSol(scip, foundsol, cutoff) );
+
+            /* opportunistically mine zero-gain observations for other fractional candidates */
+            if( !(*cutoff) && minecands != NULL && nminecands > 0 && !SCIPisExact(scip)
+               && SCIPisFeasLE(scip, *value, lpobjval) )
+            {
+               SCIP_Real feastol = SCIPfeastol(scip);
+               int k;
+
+               assert(minecandssol != NULL);
+               assert(minedown != NULL);
+               assert(mineup != NULL);
+
+               for( k = 0; k < nminecands; ++k )
+               {
+                  SCIP_VAR* mvar = minecands[k];
+                  SCIP_Real psol;
+
+                  if( mvar == var || SCIPvarGetStatus(mvar) != SCIP_VARSTATUS_COLUMN )
+                     continue;
+
+                  psol = SCIPvarGetLPSol(mvar);
+                  if( !minedown[k] && psol <= SCIPfeasFloor(scip, minecandssol[k]) + feastol )
+                     minedown[k] = TRUE;
+                  if( !mineup[k] && psol >= SCIPfeasCeil(scip, minecandssol[k]) - feastol )
+                     mineup[k] = TRUE;
+               }
+            }
             break;
          }
          case SCIP_LPSOLSTAT_ITERLIMIT:
@@ -4207,6 +4240,40 @@ SCIP_RETCODE SCIPgetVarStrongbranchWithPropagation(
                                               *   solving process should be stopped (e.g., due to a time limit) */
    SCIP_Real*            newlbs,             /**< array to store valid lower bounds for all active variables, or NULL */
    SCIP_Real*            newubs              /**< array to store valid upper bounds for all active variables, or NULL */
+   )
+{
+   return SCIPgetVarStrongbranchWithPropagationMining(scip, var, solval, lpobjval, itlim, maxproprounds,
+      down, up, downvalid, upvalid, ndomredsdown, ndomredsup, downinf, upinf, downconflict, upconflict,
+      lperror, newlbs, newubs, NULL, NULL, 0, NULL, NULL);
+}
+
+/** gets strong branching information with propagation and opportunistically mines zero-gain observations for other candidates */
+SCIP_RETCODE SCIPgetVarStrongbranchWithPropagationMining(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_VAR*             var,                /**< variable to get strong branching values for */
+   SCIP_Real             solval,             /**< value of the variable in the current LP solution */
+   SCIP_Real             lpobjval,           /**< LP objective value of the current LP solution */
+   int                   itlim,              /**< iteration limit for strong branchings */
+   int                   maxproprounds,      /**< maximum number of propagation rounds (-1: no limit, -2: parameter
+                                              *   settings) */
+   SCIP_Real*            down,               /**< stores dual bound after branching column down */
+   SCIP_Real*            up,                 /**< stores dual bound after branching column up */
+   SCIP_Bool*            downvalid,          /**< stores whether the returned down value is a valid dual bound, or NULL */
+   SCIP_Bool*            upvalid,            /**< stores whether the returned up value is a valid dual bound, or NULL */
+   SCIP_Longint*         ndomredsdown,       /**< pointer to store the number of domain reductions down, or NULL */
+   SCIP_Longint*         ndomredsup,         /**< pointer to store the number of domain reductions up, or NULL */
+   SCIP_Bool*            downinf,            /**< pointer to store whether the downwards branch is infeasible, or NULL */
+   SCIP_Bool*            upinf,              /**< pointer to store whether the upwards branch is infeasible, or NULL */
+   SCIP_Bool*            downconflict,       /**< pointer to store whether a conflict constraint was created for down, or NULL */
+   SCIP_Bool*            upconflict,         /**< pointer to store whether a conflict constraint was created for up, or NULL */
+   SCIP_Bool*            lperror,            /**< pointer to store whether an unresolved LP error occurred */
+   SCIP_Real*            newlbs,             /**< array to store valid lower bounds for all active variables, or NULL */
+   SCIP_Real*            newubs,             /**< array to store valid upper bounds for all active variables, or NULL */
+   SCIP_VAR**            minecands,          /**< candidate variables to inspect on degenerate zero-gain probing LPs, or NULL */
+   const SCIP_Real*      minecandssol,       /**< parent LP solution values of minecands, or NULL */
+   int                   nminecands,         /**< number of entries in minecands */
+   SCIP_Bool*            minedown,           /**< flags set to TRUE when down zero-gain is observed, or NULL */
+   SCIP_Bool*            mineup              /**< flags set to TRUE when up zero-gain is observed, or NULL */
    )
 {
    SCIP_COL* col;
@@ -4383,7 +4450,8 @@ SCIP_RETCODE SCIPgetVarStrongbranchWithPropagation(
       if( downchild )
       {
          SCIP_CALL( performStrongbranchWithPropagation(scip, var, downchild, firstchild || cutoff, propagate, newub, itlim, maxproprounds,
-               down, &downvalidlocal, ndomredsdown, downconflict, lperror, vars, nvars, newlbs, newubs, &foundsol, &cutoff) );
+               down, &downvalidlocal, ndomredsdown, downconflict, lperror, vars, nvars, newlbs, newubs,
+               lpobjval, minecands, minecandssol, nminecands, minedown, mineup, &foundsol, &cutoff) );
 
          /* check for infeasibility */
          if( cutoff )
@@ -4409,7 +4477,8 @@ SCIP_RETCODE SCIPgetVarStrongbranchWithPropagation(
       else
       {
          SCIP_CALL( performStrongbranchWithPropagation(scip, var, downchild, firstchild || cutoff, propagate, newlb, itlim, maxproprounds,
-               up, &upvalidlocal, ndomredsup, upconflict, lperror, vars, nvars, newlbs, newubs, &foundsol, &cutoff) );
+               up, &upvalidlocal, ndomredsup, upconflict, lperror, vars, nvars, newlbs, newubs,
+               lpobjval, minecands, minecandssol, nminecands, minedown, mineup, &foundsol, &cutoff) );
 
          /* check for infeasibility */
          if( cutoff )
