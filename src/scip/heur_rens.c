@@ -58,6 +58,7 @@
 #include "scip/scip_solve.h"
 #include "scip/scip_solvingstats.h"
 #include "scip/scip_timing.h"
+#include "scip/scip_tree.h"
 #include "scip/scip_var.h"
 
 
@@ -69,7 +70,7 @@
 #define HEUR_FREQ             0
 #define HEUR_FREQOFS          0
 #define HEUR_MAXDEPTH         -1
-#define HEUR_TIMING           SCIP_HEURTIMING_AFTERLPNODE
+#define HEUR_TIMING           SCIP_HEURTIMING_DURINGLPLOOP | SCIP_HEURTIMING_AFTERLPNODE
 #define HEUR_USESSUBSCIP      TRUE      /**< does the heuristic use a secondary SCIP instance? */
 
 /* default values for RENS-specific plugins */
@@ -132,6 +133,7 @@ struct SCIP_HeurData
                                               * including techniques that merely work on the dual bound, e.g., cuts?
                                               * This is only implemented for testing and not recommended to be used! */
    int                   bestsollimit;       /**< limit on number of improving incumbent solutions in sub-CIP            */
+   int                   lastlooprun;        /**< run number of last DURINGLPLOOP execution (-1 if none)                 */
    SCIP_Bool             useuct;             /**< should uct node selection be used at the beginning of the search?  */
 };
 
@@ -739,6 +741,7 @@ SCIP_DECL_HEURINIT(heurInitRens)
 
    /* initialize data */
    heurdata->usednodes = 0;
+   heurdata->lastlooprun = -1;
 
    return SCIP_OKAY;
 }
@@ -765,6 +768,22 @@ SCIP_DECL_HEUREXEC(heurExecRens)
    /* get heuristic data */
    heurdata = SCIPheurGetData(heur);
    assert( heurdata != NULL );
+
+   /* during root LP loop, run at most once per run on heavy roots when gap is still large
+    * so RENS does not wait behind a long root separation loop before finding a strong incumbent
+    */
+   if( heurtiming == SCIP_HEURTIMING_DURINGLPLOOP )
+   {
+      if( SCIPgetDepth(scip) != 0 || SCIPgetSubscipDepth(scip) > 0
+         || heurdata->lastlooprun == SCIPgetNRuns(scip)
+         || SCIPgetNSepaRounds(scip) < 2
+         || SCIPgetNLPIterations(scip) < 5000
+         || (SCIPgetNSols(scip) > 0 && SCIPgetGap(scip) <= 0.05) )
+      {
+         *result = SCIP_DIDNOTRUN;
+         return SCIP_OKAY;
+      }
+   }
 
    /* only call heuristic, if an optimal LP solution is at hand */
    if( heurdata->startsol == 'l' && SCIPgetLPSolstat(scip) != SCIP_LPSOLSTAT_OPTIMAL )
@@ -805,6 +824,9 @@ SCIP_DECL_HEUREXEC(heurExecRens)
 
    if( SCIPisStopped(scip) && !heurdata->extratime )
       return SCIP_OKAY;
+
+   if( heurtiming == SCIP_HEURTIMING_DURINGLPLOOP )
+      heurdata->lastlooprun = SCIPgetNRuns(scip);
 
    SCIP_CALL( SCIPapplyRens(scip, heur, result, heurdata->minfixingrate, heurdata->minimprove,
          heurdata->maxnodes, nstallnodes, heurdata->startsol, heurdata->binarybounds, heurdata->uselprows) );
