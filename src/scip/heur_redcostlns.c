@@ -251,7 +251,7 @@ SCIP_RETCODE solveSubscip(
    {
       SCIPwarningMessage(scip, "Error while presolving subproblem in %s heuristic; sub-SCIP terminated with code <%d>\n",
          HEUR_NAME, subretcode);
-      SCIPABORT();  /*lint --e{527}*/
+      retcode = subretcode;
       goto TERMINATE;
    }
 
@@ -269,14 +269,14 @@ SCIP_RETCODE solveSubscip(
       REDCOSTLNS_CALL( SCIPcatchEvent(subscip, SCIP_EVENTTYPE_LPSOLVED, eventhdlr, (SCIP_EVENTDATA*)heurdata, NULL) );
       caughtevent = TRUE;
       subretcode = SCIPsolve(subscip);
-      caughtevent = FALSE;
       REDCOSTLNS_CALL( SCIPdropEvent(subscip, SCIP_EVENTTYPE_LPSOLVED, eventhdlr, (SCIP_EVENTDATA*)heurdata, -1) );
+      caughtevent = FALSE;
 
       if( subretcode != SCIP_OKAY )
       {
          SCIPwarningMessage(scip, "Error while solving subproblem in %s heuristic; sub-SCIP terminated with code <%d>\n",
             HEUR_NAME, subretcode);
-         SCIPABORT();  /*lint --e{527}*/
+         retcode = subretcode;
          goto TERMINATE;
       }
 
