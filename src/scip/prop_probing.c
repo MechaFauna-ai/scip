@@ -805,6 +805,7 @@ SCIP_RETCODE applyProbing(
    int maxuseless;
    int maxtotaluseless;
    int maxsumuseless;
+   int nprobedthiscall;
    int i;
    int oldstartidx;
    SCIP_Bool aborted;
@@ -817,6 +818,7 @@ SCIP_RETCODE applyProbing(
    maxuseless = (propdata->maxuseless > 0 ? propdata->maxuseless : INT_MAX);
    maxtotaluseless = (propdata->maxtotaluseless > 0 ? propdata->maxtotaluseless : INT_MAX);
    maxsumuseless = (propdata->maxsumuseless > 0 ? propdata->maxsumuseless : INT_MAX);
+   nprobedthiscall = 0;
    aborted = FALSE;
    looped = FALSE;
    oldstartidx = *startidx;
@@ -888,14 +890,30 @@ SCIP_RETCODE applyProbing(
             break;
          }
 
-         /* check if we already fixed enough variables for this round, or probed on all variables */
-         if( *nfixedvars - oldnfixedvars + *naggrvars - oldnaggrvars >= maxfixings || (looped && oldstartidx == i) )
+         /* check if we already fixed enough variables for this round, or probed on all variables;
+          * during presolving, if probing is on a high-yield streak (>= 25% fixings/aggregations per probed var
+          * and low consecutive useless count), extend the per-round cap up to 40x maxfixings to avoid
+          * repeatedly restarting expensive exhaustive presolvers every 25 fixings
+          */
          {
-            if( *nfixedvars - oldnfixedvars + *naggrvars - oldnaggrvars > 0 )
-               *delay = TRUE;
-            else
-               aborted = TRUE;
-            break;
+            int nfound = *nfixedvars - oldnfixedvars + *naggrvars - oldnaggrvars;
+            int effmaxfixings = maxfixings;
+
+            if( maxfixings < INT_MAX && SCIPgetStage(scip) == SCIP_STAGE_PRESOLVING
+               && nprobedthiscall > 0 && propdata->nuseless < 10
+               && (SCIP_Longint)nfound * 4 >= (SCIP_Longint)nprobedthiscall )
+            {
+               effmaxfixings = (maxfixings <= INT_MAX / 40) ? 40 * maxfixings : INT_MAX;
+            }
+
+            if( nfound >= effmaxfixings || (looped && oldstartidx == i) )
+            {
+               if( nfound > 0 )
+                  *delay = TRUE;
+               else
+                  aborted = TRUE;
+               break;
+            }
          }
 
          /* display probing status */
@@ -914,6 +932,8 @@ SCIP_RETCODE applyProbing(
          if( !SCIPvarIsActive(vars[i]) || SCIPvarIsDeleted(vars[i])
             || SCIPvarGetLbLocal(vars[i]) > 0.5 || SCIPvarGetUbLocal(vars[i]) < 0.5 )
             continue;
+
+         ++nprobedthiscall;
 
          if( propdata->nuseless > 0 )
             propdata->nsumuseless++;
