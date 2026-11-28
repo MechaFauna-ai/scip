@@ -835,29 +835,31 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpGomory)
                }
             }
 
+            SCIP_Bool mirsuccess = FALSE;
+
             if( separategmi && naddedcuts < maxsepacuts )
             {
                SCIP_Real mirthresh = strongcgsuccess ? MAX(negscgeff, gmithresh) : gmithresh;
                cutefficacy = mirthresh;
 
                SCIP_CALL( SCIPcalcMIR(scip, NULL, POSTPROCESS, BOUNDSWITCH, VARTYPEUSEVBDS, allowlocal, FIXINTEGRALRHS, NULL, NULL,
-                  minfrac, maxfrac, 1.0, aggrrow, cutcoefs, &cutrhs, cutinds, &cutnnz, &cutefficacy, &cutrank, &cutislocal, &success) );
+                  minfrac, maxfrac, 1.0, aggrrow, cutcoefs, &cutrhs, cutinds, &cutnnz, &cutefficacy, &cutrank, &cutislocal, &mirsuccess) );
+            }
 
-               if( success || strongcgsuccess )
+            if( (mirsuccess || strongcgsuccess) && naddedcuts < maxsepacuts )
+            {
+               SCIP_Real finalcut_eff = mirsuccess ? cutefficacy : negscgeff;
+
+               assert(allowlocal || !cutislocal); /*lint !e644*/
+               if( mirsuccess )
+                  strongcgsuccess = FALSE;
+
+               SCIP_CALL( addCut(scip, sepadata, vars, c, maxdnom, maxscale, cutnnz, cutinds, cutcoefs, finalcut_eff, cutrhs,
+                     cutislocal, cutrank, strongcgsuccess, &cutoff, &naddedcuts) );
+               if( c >= 0 && finalcut_eff > cutefficacies[i] )
                {
-                  SCIP_Real finalcut_eff = success ? cutefficacy : negscgeff;
-
-                  assert(allowlocal || !cutislocal); /*lint !e644*/
-                  if( success )
-                     strongcgsuccess = FALSE;
-
-                  SCIP_CALL( addCut(scip, sepadata, vars, c, maxdnom, maxscale, cutnnz, cutinds, cutcoefs, finalcut_eff, cutrhs,
-                        cutislocal, cutrank, strongcgsuccess, &cutoff, &naddedcuts) );
-                  if( c >= 0 && finalcut_eff > cutefficacies[i] )
-                  {
-                     cutefficacies[i] = finalcut_eff;
-                     colindsproducedcut[i] = c;
-                  }
+                  cutefficacies[i] = finalcut_eff;
+                  colindsproducedcut[i] = c;
                }
             }
          }
