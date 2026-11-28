@@ -402,6 +402,7 @@ add_library(objects_base OBJECT
    scip/heur_reoptsols.c
    scip/heur_repair.c
    scip/heur_randrounding.c
+   scip/heur_redcostlns.c
    scip/heur_rens.c
    scip/heur_rins.c
    scip/heur_rootsoldiving.c
@@ -968,6 +969,7 @@ foreach(header_file
       scip/heur_proximity.h
       scip/heur_pscostdiving.h
       scip/heur_randrounding.h
+      scip/heur_redcostlns.h
       scip/heur_rens.h
       scip/heur_reoptsols.h
       scip/heur_repair.h

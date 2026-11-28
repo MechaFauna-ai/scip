@@ -205,6 +205,7 @@ SCIP_RETCODE SCIPincludeDefaultPlugins(
    SCIP_CALL( SCIPincludeHeurLinesearchdiving(scip) );
    SCIP_CALL( SCIPincludeHeurGuideddiving(scip) );
    SCIP_CALL( SCIPincludeHeurOctane(scip) );
+   SCIP_CALL( SCIPincludeHeurRedcostlns(scip) );
    SCIP_CALL( SCIPincludeHeurRens(scip) );
    SCIP_CALL( SCIPincludeHeurAlns(scip) );
    SCIP_CALL( SCIPincludeHeurRins(scip) );
