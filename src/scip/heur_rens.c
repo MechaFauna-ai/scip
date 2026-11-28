@@ -769,7 +769,7 @@ SCIP_DECL_HEUREXEC(heurExecRens)
    heurdata = SCIPheurGetData(heur);
    assert( heurdata != NULL );
 
-   /* during the initial root LP loop, run at most once on heavy roots when gap is still large
+   /* during the initial root LP loop, attempt at most once on heavy roots when gap is still large
     * so RENS does not wait behind a long root separation loop before finding a strong incumbent
     */
    if( heurtiming == SCIP_HEURTIMING_DURINGLPLOOP )
@@ -783,6 +783,7 @@ SCIP_DECL_HEUREXEC(heurExecRens)
          *result = SCIP_DIDNOTRUN;
          return SCIP_OKAY;
       }
+      heurdata->lastlooprun = SCIPgetNRuns(scip);
    }
 
    /* only call heuristic, if an optimal LP solution is at hand */
@@ -824,9 +825,6 @@ SCIP_DECL_HEUREXEC(heurExecRens)
 
    if( SCIPisStopped(scip) && !heurdata->extratime )
       return SCIP_OKAY;
-
-   if( heurtiming == SCIP_HEURTIMING_DURINGLPLOOP )
-      heurdata->lastlooprun = SCIPgetNRuns(scip);
 
    SCIP_CALL( SCIPapplyRens(scip, heur, result, heurdata->minfixingrate, heurdata->minimprove,
          heurdata->maxnodes, nstallnodes, heurdata->startsol, heurdata->binarybounds, heurdata->uselprows) );
