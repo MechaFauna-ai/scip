@@ -186,11 +186,8 @@ struct FJ_Solver
    int                   goodvarssize;       /**< size of good vars array */
    int*                  goodvarssetidx;     /**< mapping from variable to index in goodvarsset */
    SCIP_Real*            incumbentassignment;/**< incumbent assignment */
-   SCIP_Real*            bestassignment;     /**< best feasible assignment found during this run */
    SCIP_Real             incumbentobj;       /**< current objective value of incumbent assignment */
    SCIP_Real             bestobj;            /**< best feasible objective value found during this run */
-   SCIP_Real             lastsubmittedobj;   /**< objective value of last solution submitted to SCIP */
-   SCIP_Bool             haspendingbest;     /**< whether bestassignment has not yet been submitted to SCIP */
    SCIP_Real*            act;                /**< per-constraint current activity */
    int*                  unsatidxs;          /**< violated constraint indices */
    int                   nunsat;             /**< number of violated constraints */
@@ -590,11 +587,8 @@ SCIP_RETCODE fjSolverCreate(
       solv->goodvarssetidx[i] = -1;
 
    solv->incumbentassignment = NULL;
-   SCIP_CALL( SCIPallocBlockMemoryArray(scip, &solv->bestassignment, problem->nvars) );
    solv->incumbentobj = 0.0;
    solv->bestobj = SCIPinfinity(scip);
-   solv->lastsubmittedobj = SCIPinfinity(scip);
-   solv->haspendingbest = FALSE;
    solv->act = NULL;
    solv->unsatidxs = NULL;
    solv->nunsat = 0;
@@ -741,8 +735,6 @@ SCIP_RETCODE fjSolverFree(
       SCIPfreeBlockMemoryArray(scip, &solv->act, solv->problem->nconstraints);
    if( solv->incumbentassignment != NULL )
       SCIPfreeBlockMemoryArray(scip, &solv->incumbentassignment, solv->problem->nvars);
-   if( solv->bestassignment != NULL )
-      SCIPfreeBlockMemoryArray(scip, &solv->bestassignment, solv->problem->nvars);
    SCIPfreeBlockMemoryArray(scip, &solv->goodvarssetidx, solv->problem->nvars);
    SCIPfreeBlockMemoryArray(scip, &solv->goodvarsset, solv->goodvarssize);
    SCIPfreeBlockMemoryArray(scip, &solv->jumpmoves, solv->problem->nvars);
@@ -1323,13 +1315,27 @@ SCIP_RETCODE fjSolverUpdateWeights(
       if( solver->objectiveweight > 1.0e20 )
          rescale = TRUE;
 
-      effort += problem->nvars;
-      for( i = 0; i < problem->nvars; ++i )
+      if( !rescale )
       {
-         move = solver->jumpmoves + i;
-         move->score += solver->weightupdateincrement * problem->vars[i].objcoeff
-               * (solver->incumbentassignment[i] - move->value);
-         SCIP_CALL( fjSolverUpdateGoodMoves(scip, solver, i) );
+         for( i = 0; i < problem->nvars; ++i )
+         {
+            if( problem->vars[i].objcoeff == 0.0 )
+               continue;
+
+            if( problem->vars[i].vartype == FJ_INTEGER && problem->vars[i].ub - problem->vars[i].lb <= 1.0 )
+            {
+               move = solver->jumpmoves + i;
+               move->score += solver->weightupdateincrement * problem->vars[i].objcoeff
+                     * (solver->incumbentassignment[i] - move->value);
+               ++effort;
+               SCIP_CALL( fjSolverUpdateGoodMoves(scip, solver, i) );
+            }
+            else
+            {
+               /* non-binary variable: new objective slope may change the optimal breakpoint */
+               SCIP_CALL( fjSolverResetMoves(scip, solver, i) );
+            }
+         }
       }
    }
    else
@@ -1966,10 +1972,7 @@ SCIP_RETCODE fjCheckTermination(
             SCIP_Bool submitnow;
 
             stored = FALSE;
-            submitnow = (SCIPgetNSols(scip) == 0)
-               || (objective < SCIPgetCutoffbound(scip)
-                  && (SCIPisInfinity(scip, solver->lastsubmittedobj)
-                     || (solver->lastsubmittedobj - objective) / MAX(1.0, REALABS(objective)) >= 0.01));
+            submitnow = (SCIPgetNSols(scip) == 0) || (objective < SCIPgetCutoffbound(scip));
 
             if( submitnow )
             {
@@ -1979,19 +1982,15 @@ SCIP_RETCODE fjCheckTermination(
                   ++solver->nsols;
                   solver->bestobj = objective;
                   solver->effort = 0;
-                  memcpy(solver->bestassignment, solver->incumbentassignment, (size_t)problem->nvars * sizeof(SCIP_Real));
-                  solver->lastsubmittedobj = objective;
-                  solver->haspendingbest = FALSE;
                   if( heurdata->verbosity >= 1 )
                      SCIPinfoMessage(scip, NULL, "Feasibility jump: accepted objective %g\n", objective);
                }
             }
             else
             {
+               /* SCIP already has a better incumbent; record local progress so FJ keeps improving toward cutoff */
                solver->bestobj = objective;
                solver->effort = 0;
-               memcpy(solver->bestassignment, solver->incumbentassignment, (size_t)problem->nvars * sizeof(SCIP_Real));
-               solver->haspendingbest = TRUE;
             }
 
             if( (heurdata->maxsols >= 0 && solver->nsols >= heurdata->maxsols)
@@ -2125,15 +2124,6 @@ SCIP_RETCODE runFeasjump(
    if( !terminate && solver->nunsat == 0 )
    {
       SCIP_CALL( fjCheckTermination(scip, solver, heurdata, heur, heurtiming, &terminate) );
-   }
-
-   /* submit any buffered best feasible solution before freeing solver */
-   if( solver->haspendingbest )
-   {
-      SCIP_Bool finalstored = FALSE;
-      SCIP_CALL( checkIncumbentSol(scip, heur, heurtiming, solver->bestassignment, &finalstored) );
-      if( finalstored )
-         ++solver->nsols;
    }
 
    /* report found solution */
