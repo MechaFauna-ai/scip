@@ -517,6 +517,7 @@ add_library(objects_base OBJECT
    scip/sepa_mixing.c
    scip/sepa_modk.c
    scip/sepa_oddcycle.c
+   scip/sepa_path.c
    scip/sepa_rapidlearning.c
    scip/sepa_rlt.c
    scip/sepa_zerohalf.c
@@ -1230,6 +1231,7 @@ foreach(header_file
       scip/sepa_mixing.h
       scip/sepa_modk.h
       scip/sepa_oddcycle.h
+      scip/sepa_path.h
       scip/sepa_rapidlearning.h
       scip/sepa_rlt.h
       scip/sepastore.h
