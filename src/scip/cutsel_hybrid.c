@@ -32,13 +32,17 @@
 
 /*---+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8----+----9----+----0----+----1----+----2*/
 
+#include <math.h>
 #include "scip/scip_cutsel.h"
 #include "scip/scip_cut.h"
 #include "scip/scip_lp.h"
 #include "scip/scip_mem.h"
+#include "scip/scip_numerics.h"
+#include "scip/scip_param.h"
 #include "scip/scip_randnumgen.h"
 #include "scip/cutsel_hybrid.h"
 #include "scip/pub_lp.h"
+#include "scip/pub_var.h"
 
 
 #define CUTSEL_NAME              "hybrid"
@@ -85,6 +89,101 @@ struct SCIP_CutselData
  * Local methods
  */
 
+/** computes active-entry efficacy (ignoring entries at their minimal-activity bound) using the configured efficacy norm */
+static
+SCIP_Real computeActiveEfficacy(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_ROW*             row,                /**< cut row */
+   char                  efficacynorm        /**< efficacy norm ('e', 'm', 's', 'd') */
+   )
+{
+   SCIP_COL** cols;
+   SCIP_Real* vals;
+   SCIP_Real feasibility;
+   SCIP_Real activity;
+   SCIP_Real lhs;
+   SCIP_Real rhs;
+   SCIP_Real viol;
+   SCIP_Real feastol;
+   SCIP_Real norm;
+   SCIP_Real eps;
+   SCIP_Bool rhsViol;
+   int nnonz;
+   int nactive;
+   int j;
+
+   feasibility = SCIPgetRowLPFeasibility(scip, row);
+   if( feasibility >= 0.0 )
+      return SCIPgetCutEfficacy(scip, NULL, row);
+
+   viol = -feasibility;
+   activity = SCIPgetRowLPActivity(scip, row);
+   lhs = SCIProwGetLhs(row);
+   rhs = SCIProwGetRhs(row);
+   feastol = SCIPfeastol(scip);
+
+   if( !SCIPisInfinity(scip, rhs) && activity > rhs )
+      rhsViol = TRUE;
+   else if( !SCIPisInfinity(scip, -lhs) && lhs > activity )
+      rhsViol = FALSE;
+   else
+      return SCIPgetCutEfficacy(scip, NULL, row);
+
+   cols = SCIProwGetCols(row);
+   vals = SCIProwGetVals(row);
+   nnonz = SCIProwGetNNonz(row);
+   norm = 0.0;
+   nactive = 0;
+
+   for( j = 0; j < nnonz; ++j )
+   {
+      SCIP_VAR* var = SCIPcolGetVar(cols[j]);
+      SCIP_Real solval = SCIPcolGetPrimsol(cols[j]);
+      SCIP_Real coef = rhsViol ? vals[j] : -vals[j];
+      SCIP_Bool isactive = FALSE;
+
+      if( coef > 0.0 )
+         isactive = (solval > SCIPvarGetLbLocal(var) + feastol);
+      else if( coef < 0.0 )
+         isactive = (solval < SCIPvarGetUbLocal(var) - feastol);
+
+      if( isactive )
+      {
+         SCIP_Real ac = REALABS(coef);
+         ++nactive;
+         switch( efficacynorm )
+         {
+            case 'e':
+               norm += coef * coef;
+               break;
+            case 'm':
+               if( ac > norm )
+                  norm = ac;
+               break;
+            case 's':
+               norm += ac;
+               break;
+            case 'd':
+               norm = 1.0;
+               break;
+            default:
+               return SCIPgetCutEfficacy(scip, NULL, row);
+         }
+      }
+   }
+
+   if( nactive == 0 )
+      return SCIPgetCutEfficacy(scip, NULL, row);
+
+   if( efficacynorm == 'e' )
+      norm = sqrt(norm);
+
+   eps = SCIPsumepsilon(scip);
+   norm = MAX(norm, eps);
+
+   return viol / norm;
+}
+
 /** returns the maximum score of cuts; if scores is not NULL, then stores the individual score of each cut in scores */
 static
 SCIP_Real scoring(
@@ -101,8 +200,10 @@ SCIP_Real scoring(
 {
    SCIP_Real maxscore = 0.0;
    SCIP_SOL* sol;
+   char efficacynorm = 'e';
    int i;
 
+   (void) SCIPgetCharParam(scip, "separating/efficacynorm", &efficacynorm);
    sol = SCIPgetBestSol(scip);
 
    /* if there is an incumbent and the factor is not 0.0, compute directed cutoff distances for the incumbent */
@@ -113,7 +214,8 @@ SCIP_Real scoring(
          SCIP_Real score;
          SCIP_Real objparallelism;
          SCIP_Real intsupport;
-         SCIP_Real efficacy;
+         SCIP_Real stdefficacy;
+         SCIP_Real activeefficacy;
 
          if( intsupportweight > 0.0 )
             intsupport = intsupportweight * SCIPgetRowNumIntCols(scip, cuts[i])  / (SCIP_Real) SCIProwGetNNonz(cuts[i]);
@@ -125,20 +227,20 @@ SCIP_Real scoring(
          else
             objparallelism = 0.0;
 
-         efficacy = SCIPgetCutEfficacy(scip, NULL, cuts[i]);
+         stdefficacy = SCIPgetCutEfficacy(scip, NULL, cuts[i]);
 
          if( SCIProwIsLocal(cuts[i]) )
          {
-            score = dircutoffdistweight * efficacy;
+            score = dircutoffdistweight * stdefficacy;
          }
          else
          {
             score = SCIPgetCutLPSolCutoffDistance(scip, sol, cuts[i]);
-            score = dircutoffdistweight * MAX(score, efficacy);
+            score = dircutoffdistweight * MAX(score, stdefficacy);
          }
 
-         efficacy *= efficacyweight;
-         score += objparallelism + intsupport + efficacy;
+         activeefficacy = efficacyweight > 0.0 ? efficacyweight * computeActiveEfficacy(scip, cuts[i], efficacynorm) : 0.0;
+         score += objparallelism + intsupport + activeefficacy;
 
          /* add small term to prefer global pool cuts */
          if( SCIProwIsInGlobalCutpool(cuts[i]) )
@@ -178,7 +280,7 @@ SCIP_Real scoring(
          else
             objparallelism = 0.0;
 
-         efficacy = efficacyweight > 0.0 ?  efficacyweight * SCIPgetCutEfficacy(scip, NULL, cuts[i]) : 0.0;
+         efficacy = efficacyweight > 0.0 ?  efficacyweight * computeActiveEfficacy(scip, cuts[i], efficacynorm) : 0.0;
 
          score = objparallelism + intsupport + efficacy;
 
