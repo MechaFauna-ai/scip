@@ -4737,8 +4737,10 @@ SCIP_RETCODE findMIRBestLb(
          /* the current solution does not change while scanning the variable bounds */
          lpsol = sol == NULL && SCIPtreeHasCurrentNodeLP(scip->tree);
 
-         /* O(1) fast path: if the cached LP-closest active VLB is legal for this section, it is optimal over the legal subset */
-         if( lpsol && nvlbs > 1 )
+         /* O(1) fast path: if all columns are in the LP (no loose vars whose local bounds can change without
+          * incrementing stat->lpcount) and the cached LP-closest active VLB is legal for this section, it is optimal
+          */
+         if( lpsol && nvlbs > 1 && SCIPallColsInLP(scip) )
          {
             SCIP_Real candvlb;
             int candidx;
@@ -4862,8 +4864,10 @@ SCIP_RETCODE findMIRBestUb(
          /* the current solution does not change while scanning the variable bounds */
          lpsol = sol == NULL && SCIPtreeHasCurrentNodeLP(scip->tree);
 
-         /* O(1) fast path: if the cached LP-closest active VUB is legal for this section, it is optimal over the legal subset */
-         if( lpsol && nvubs > 1 )
+         /* O(1) fast path: if all columns are in the LP (no loose vars) and the cached LP-closest active VUB is legal
+          * for this section, it is optimal over the legal subset
+          */
+         if( lpsol && nvubs > 1 && SCIPallColsInLP(scip) )
          {
             SCIP_Real candvub;
             int candidx;
@@ -9384,8 +9388,8 @@ SCIP_RETCODE getClosestVlb(
       /* the current solution does not change while scanning the variable bounds */
       lpsol = sol == NULL && SCIPtreeHasCurrentNodeLP(scip->tree);
 
-      /* O(1) fast path: if the cached LP-closest active VLB meets all SNF criteria, it is optimal */
-      if( lpsol && nvlbs > 1 )
+      /* O(1) fast path: if all columns are in the LP and the cached LP-closest active VLB meets all SNF criteria, it is optimal */
+      if( lpsol && nvlbs > 1 && SCIPallColsInLP(scip) )
       {
          SCIP_Real candvlb;
          int candidx;
@@ -9553,8 +9557,8 @@ SCIP_RETCODE getClosestVub(
       /* the current solution does not change while scanning the variable bounds */
       lpsol = sol == NULL && SCIPtreeHasCurrentNodeLP(scip->tree);
 
-      /* O(1) fast path: if the cached LP-closest active VUB meets all SNF criteria, it is optimal */
-      if( lpsol && nvubs > 1 )
+      /* O(1) fast path: if all columns are in the LP and the cached LP-closest active VUB meets all SNF criteria, it is optimal */
+      if( lpsol && nvubs > 1 && SCIPallColsInLP(scip) )
       {
          SCIP_Real candvub;
          int candidx;
