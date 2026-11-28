@@ -688,6 +688,8 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpGomory)
    {
       SCIP_Real cutrhs;
       SCIP_Real cutefficacy = 0.0;
+      SCIP_Real posscgeff = 0.0;
+      SCIP_Real posgmieff = 0.0;
       SCIP_Bool success;
       SCIP_Bool cutislocal;
       SCIP_Bool strongcgsuccess = FALSE;
@@ -707,58 +709,160 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpGomory)
       SCIP_CALL( SCIPaggrRowSumRows(scip, aggrrow, binvrow, inds, ninds,
          sepadata->sidetypebasis, allowlocal, SCIPallowNegSlack(scip) ? 2 : 0, (int) MAXAGGRLEN(nvars), &success) );
 
-      if( !success )
-         continue;
-
-      /* try to create a strong CG cut out of the aggregation row */
-      if( separatescg && !SCIPisExact(scip) )
+      if( success )
       {
-         SCIP_CALL( SCIPcalcStrongCG(scip, NULL, POSTPROCESS, BOUNDSWITCH, VARTYPEUSEVBDS, allowlocal, minfrac, maxfrac,
-            1.0, aggrrow, cutcoefs, &cutrhs, cutinds, &cutnnz, &cutefficacy, &cutrank, &cutislocal, &strongcgsuccess) );
-
-         /* if we want to generate both cuts, add cut and reset cutefficacy and strongcgsuccess */
-         if( strongcgsuccess && sepadata->genbothgomscg )
+         /* try to create a strong CG cut out of the aggregation row */
+         if( separatescg && !SCIPisExact(scip) )
          {
-            assert(allowlocal || !cutislocal); /*lint !e644*/
-            SCIP_CALL( addCut(scip, sepadata, vars, c, maxdnom, maxscale, cutnnz, cutinds, cutcoefs, cutefficacy, cutrhs,
-                  cutislocal, cutrank, TRUE, &cutoff, &naddedcuts) );
-            if( c >= 0 )
+            SCIP_CALL( SCIPcalcStrongCG(scip, NULL, POSTPROCESS, BOUNDSWITCH, VARTYPEUSEVBDS, allowlocal, minfrac, maxfrac,
+               1.0, aggrrow, cutcoefs, &cutrhs, cutinds, &cutnnz, &cutefficacy, &cutrank, &cutislocal, &strongcgsuccess) );
+
+            /* if we want to generate both cuts, add cut and reset cutefficacy and strongcgsuccess */
+            if( strongcgsuccess && sepadata->genbothgomscg )
             {
-               cutefficacies[i] = cutefficacy;
-               colindsproducedcut[i] = c;
+               assert(allowlocal || !cutislocal); /*lint !e644*/
+               posscgeff = cutefficacy;
+               SCIP_CALL( addCut(scip, sepadata, vars, c, maxdnom, maxscale, cutnnz, cutinds, cutcoefs, cutefficacy, cutrhs,
+                     cutislocal, cutrank, TRUE, &cutoff, &naddedcuts) );
+               if( c >= 0 )
+               {
+                  cutefficacies[i] = cutefficacy;
+                  colindsproducedcut[i] = c;
+               }
+               cutefficacy = 0.0;
+               strongcgsuccess = FALSE;
+               if( cutoff )
+                  break;
             }
+         }
+         /* try to create Gomory cut out of the aggregation row */
+         if( separategmi )
+         {
+            /* SCIPcalcMIR will only override the cut if its efficacy is larger than the one of the strongcg cut */
+            SCIP_CALL( SCIPcalcMIR(scip, NULL, POSTPROCESS, BOUNDSWITCH, VARTYPEUSEVBDS, allowlocal, FIXINTEGRALRHS, NULL, NULL,
+               minfrac, maxfrac, 1.0, aggrrow, cutcoefs, &cutrhs, cutinds, &cutnnz, &cutefficacy, &cutrank, &cutislocal, &success) );
+
+            if( success || strongcgsuccess )
+            {
+               assert(allowlocal || !cutislocal); /*lint !e644*/
+               if( success )
+                  strongcgsuccess = FALSE;   /* Set strongcgsuccess to FALSE, since the MIR cut has overriden the strongcg cut. */
+
+               posgmieff = cutefficacy;
+               SCIP_CALL( addCut(scip, sepadata, vars, c, maxdnom, maxscale, cutnnz, cutinds, cutcoefs, cutefficacy, cutrhs,
+                     cutislocal, cutrank, strongcgsuccess, &cutoff, &naddedcuts) );
+               if( c >= 0 && cutefficacy > cutefficacies[i] )
+               {
+                  cutefficacies[i] = cutefficacy;
+                  colindsproducedcut[i] = c;
+               }
+               if( cutoff )
+                  break;
+            }
+         }
+         if( SCIPisCertified(scip) )
+         {
+            SCIP_CALL( SCIPfreeCertificateActiveAggrInfo(scip) );
+            SCIP_CALL( SCIPfreeCertificateActiveMirInfo(scip) );
+         }
+      }
+
+      /* at the root node, also try the negated basis inverse row on sparse rows to capture stronger
+       * asymmetric StrongCG / VBD-substituted MIR cuts (keeping only strictly better or newly found cuts)
+       */
+      if( depth == 0 && naddedcuts < maxsepacuts && !cutoff && !SCIPisExact(scip) && !SCIPisCertified(scip)
+         && ((ninds > 0 && ninds <= 200) || (ninds == -1 && nrows <= 200)) )
+      {
+         int k;
+
+         if( ninds > 0 )
+         {
+            for( k = 0; k < ninds; ++k )
+               binvrow[inds[k]] = -binvrow[inds[k]];
+         }
+         else
+         {
+            for( k = 0; k < nrows; ++k )
+               binvrow[k] = -binvrow[k];
+         }
+
+         SCIP_CALL( SCIPaggrRowSumRows(scip, aggrrow, binvrow, inds, ninds,
+            sepadata->sidetypebasis, allowlocal, SCIPallowNegSlack(scip) ? 2 : 0, (int) MAXAGGRLEN(nvars), &success) );
+
+         if( success )
+         {
+            SCIP_Real scgthresh = (posscgeff > 0.0 ? 1.05 * posscgeff : 0.0);
+            SCIP_Real gmithresh = (posgmieff > 0.0 ? 1.05 * posgmieff : 0.0);
+            SCIP_Real negscgeff = 0.0;
+
             cutefficacy = 0.0;
             strongcgsuccess = FALSE;
-            if( cutoff )
-               break;
-         }
-      }
-      /* try to create Gomory cut out of the aggregation row */
-      if( separategmi )
-      {
-         /* SCIPcalcMIR will only override the cut if its efficacy is larger than the one of the strongcg cut */
-         SCIP_CALL( SCIPcalcMIR(scip, NULL, POSTPROCESS, BOUNDSWITCH, VARTYPEUSEVBDS, allowlocal, FIXINTEGRALRHS, NULL, NULL,
-            minfrac, maxfrac, 1.0, aggrrow, cutcoefs, &cutrhs, cutinds, &cutnnz, &cutefficacy, &cutrank, &cutislocal, &success) );
 
-         if( success || strongcgsuccess )
-         {
-            assert(allowlocal || !cutislocal); /*lint !e644*/
-            if( success )
-               strongcgsuccess = FALSE;   /* Set strongcgsuccess to FALSE, since the MIR cut has overriden the strongcg cut. */
-
-            SCIP_CALL( addCut(scip, sepadata, vars, c, maxdnom, maxscale, cutnnz, cutinds, cutcoefs, cutefficacy, cutrhs,
-                  cutislocal, cutrank, strongcgsuccess, &cutoff, &naddedcuts) );
-            if( c >= 0 )
+            if( separatescg )
             {
-               cutefficacies[i] = cutefficacy;
-               colindsproducedcut[i] = c;
+               SCIP_CALL( SCIPcalcStrongCG(scip, NULL, POSTPROCESS, BOUNDSWITCH, VARTYPEUSEVBDS, allowlocal, minfrac, maxfrac,
+                  1.0, aggrrow, cutcoefs, &cutrhs, cutinds, &cutnnz, &cutefficacy, &cutrank, &cutislocal, &strongcgsuccess) );
+
+               if( strongcgsuccess )
+               {
+                  SCIP_Real minthresh = sepadata->genbothgomscg ? scgthresh : MAX(scgthresh, gmithresh);
+                  if( cutefficacy <= minthresh )
+                  {
+                     strongcgsuccess = FALSE;
+                     cutefficacy = 0.0;
+                  }
+                  else
+                  {
+                     negscgeff = cutefficacy;
+                  }
+               }
+
+               if( strongcgsuccess && sepadata->genbothgomscg )
+               {
+                  assert(allowlocal || !cutislocal); /*lint !e644*/
+                  SCIP_CALL( addCut(scip, sepadata, vars, c, maxdnom, maxscale, cutnnz, cutinds, cutcoefs, cutefficacy, cutrhs,
+                        cutislocal, cutrank, TRUE, &cutoff, &naddedcuts) );
+                  if( c >= 0 && cutefficacy > cutefficacies[i] )
+                  {
+                     cutefficacies[i] = cutefficacy;
+                     colindsproducedcut[i] = c;
+                  }
+                  strongcgsuccess = FALSE;
+                  negscgeff = 0.0;
+                  cutefficacy = 0.0;
+                  if( cutoff )
+                     break;
+               }
+            }
+
+            SCIP_Bool mirsuccess = FALSE;
+
+            if( separategmi && naddedcuts < maxsepacuts )
+            {
+               SCIP_Real mirthresh = strongcgsuccess ? MAX(negscgeff, gmithresh) : gmithresh;
+               cutefficacy = mirthresh;
+
+               SCIP_CALL( SCIPcalcMIR(scip, NULL, POSTPROCESS, BOUNDSWITCH, VARTYPEUSEVBDS, allowlocal, FIXINTEGRALRHS, NULL, NULL,
+                  minfrac, maxfrac, 1.0, aggrrow, cutcoefs, &cutrhs, cutinds, &cutnnz, &cutefficacy, &cutrank, &cutislocal, &mirsuccess) );
+            }
+
+            if( (mirsuccess || strongcgsuccess) && naddedcuts < maxsepacuts )
+            {
+               SCIP_Real finalcut_eff = mirsuccess ? cutefficacy : negscgeff;
+
+               assert(allowlocal || !cutislocal); /*lint !e644*/
+               if( mirsuccess )
+                  strongcgsuccess = FALSE;
+
+               SCIP_CALL( addCut(scip, sepadata, vars, c, maxdnom, maxscale, cutnnz, cutinds, cutcoefs, finalcut_eff, cutrhs,
+                     cutislocal, cutrank, strongcgsuccess, &cutoff, &naddedcuts) );
+               if( c >= 0 && finalcut_eff > cutefficacies[i] )
+               {
+                  cutefficacies[i] = finalcut_eff;
+                  colindsproducedcut[i] = c;
+               }
             }
          }
-      }
-      if( SCIPisCertified(scip) )
-      {
-         SCIP_CALL( SCIPfreeCertificateActiveAggrInfo(scip) );
-         SCIP_CALL( SCIPfreeCertificateActiveMirInfo(scip) );
       }
    }
 
