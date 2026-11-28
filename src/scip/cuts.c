@@ -4737,6 +4737,30 @@ SCIP_RETCODE findMIRBestLb(
          /* the current solution does not change while scanning the variable bounds */
          lpsol = sol == NULL && SCIPtreeHasCurrentNodeLP(scip->tree);
 
+         /* O(1) fast path: if all columns are in the LP (no loose vars whose local bounds can change without
+          * incrementing stat->lpcount) and the cached LP-closest active VLB is legal for this section, it is optimal
+          */
+         if( lpsol && nvlbs > 1 && SCIPgetNLPCols(scip) == SCIPgetNVars(scip) )
+         {
+            SCIP_Real candvlb;
+            int candidx;
+
+            SCIPvarGetClosestVlb(var, NULL, scip->set, scip->stat, &candvlb, &candidx);
+            if( candidx < 0 )
+            {
+               /* no active VLB exists */
+               nvlbs = 0;
+            }
+            else if( SCIPvarIsActive(vlbvars[candidx]) && SCIPvarGetProbindex(vlbvars[candidx]) < sectionstart
+               && (usevbds == 2 || SCIPvarIsBinary(vlbvars[candidx]))
+               && (!intsection || (SCIPisIntegral(scip, vlbcoefs[candidx]) && SCIPisIntegral(scip, vlbconsts[candidx]))) )
+            {
+               bestvlb = candvlb;
+               bestvlbtype = candidx;
+               nvlbs = 0;
+            }
+         }
+
          /* search best VLB */
          for( i = 0; i < nvlbs; i++ )
          {
@@ -4839,6 +4863,30 @@ SCIP_RETCODE findMIRBestUb(
 
          /* the current solution does not change while scanning the variable bounds */
          lpsol = sol == NULL && SCIPtreeHasCurrentNodeLP(scip->tree);
+
+         /* O(1) fast path: if all columns are in the LP (no loose vars) and the cached LP-closest active VUB is legal
+          * for this section, it is optimal over the legal subset
+          */
+         if( lpsol && nvubs > 1 && SCIPgetNLPCols(scip) == SCIPgetNVars(scip) )
+         {
+            SCIP_Real candvub;
+            int candidx;
+
+            SCIPvarGetClosestVub(var, NULL, scip->set, scip->stat, &candvub, &candidx);
+            if( candidx < 0 )
+            {
+               /* no active VUB exists */
+               nvubs = 0;
+            }
+            else if( SCIPvarIsActive(vubvars[candidx]) && SCIPvarGetProbindex(vubvars[candidx]) < sectionstart
+               && (usevbds == 2 || SCIPvarIsBinary(vubvars[candidx]))
+               && (!intsection || (SCIPisIntegral(scip, vubcoefs[candidx]) && SCIPisIntegral(scip, vubconsts[candidx]))) )
+            {
+               bestvub = candvub;
+               bestvubtype = candidx;
+               nvubs = 0;
+            }
+         }
 
          /* search best VUB */
          for( i = 0; i < nvubs; i++ )
@@ -9340,6 +9388,40 @@ SCIP_RETCODE getClosestVlb(
       /* the current solution does not change while scanning the variable bounds */
       lpsol = sol == NULL && SCIPtreeHasCurrentNodeLP(scip->tree);
 
+      /* O(1) fast path: if all columns are in the LP and the cached LP-closest active VLB meets all SNF criteria, it is optimal */
+      if( lpsol && nvlbs > 1 && SCIPgetNLPCols(scip) == SCIPgetNVars(scip) )
+      {
+         SCIP_Real candvlb;
+         int candidx;
+
+         SCIPvarGetClosestVlb(var, NULL, scip->set, scip->stat, &candvlb, &candidx);
+         if( candidx < 0 )
+            return SCIP_OKAY;
+         if( candvlb > *closestvlb && bestsub <= vlbconsts[candidx] && REALABS(vlbcoefs[candidx]) <= MAXABSVBCOEF )
+         {
+            int probidxbinvar = SCIPvarGetProbindex(vlbvars[candidx]);
+            if( (unsigned int)probidxbinvar < (unsigned int)nbinvars && binvarused[probidxbinvar] != 1 )
+            {
+               SCIP_Real QUAD(tmp);
+               SCIP_Real rowcoefbinvar;
+               SCIP_Real rowcoefsign = COPYSIGN(1.0, rowcoef);
+               SCIP_Real val2;
+               SCIP_Real val1;
+
+               QUAD_ARRAY_LOAD(tmp, rowcoefs, probidxbinvar);
+               rowcoefbinvar = QUAD_TO_DBL(tmp);
+               val2 = rowcoefsign * ((rowcoef * vlbcoefs[candidx]) + rowcoefbinvar);
+               val1 = rowcoefsign * ((rowcoef * (bestsub - vlbconsts[candidx])) + rowcoefbinvar);
+               if( val2 <= 0.0 && !SCIPisInfinity(scip, -val2) && val1 <= 0.0 )
+               {
+                  *closestvlb = candvlb;
+                  *closestvlbidx = candidx;
+                  return SCIP_OKAY;
+               }
+            }
+         }
+      }
+
       for( i = 0; i < nvlbs; i++ )
       {
          SCIP_Real rowcoefbinvar;
@@ -9474,6 +9556,40 @@ SCIP_RETCODE getClosestVub(
 
       /* the current solution does not change while scanning the variable bounds */
       lpsol = sol == NULL && SCIPtreeHasCurrentNodeLP(scip->tree);
+
+      /* O(1) fast path: if all columns are in the LP and the cached LP-closest active VUB meets all SNF criteria, it is optimal */
+      if( lpsol && nvubs > 1 && SCIPgetNLPCols(scip) == SCIPgetNVars(scip) )
+      {
+         SCIP_Real candvub;
+         int candidx;
+
+         SCIPvarGetClosestVub(var, NULL, scip->set, scip->stat, &candvub, &candidx);
+         if( candidx < 0 )
+            return SCIP_OKAY;
+         if( candvub < *closestvub && bestslb >= vubconsts[candidx] && REALABS(vubcoefs[candidx]) <= MAXABSVBCOEF )
+         {
+            int probidxbinvar = SCIPvarGetProbindex(vubvars[candidx]);
+            if( (unsigned int)probidxbinvar < (unsigned int)nbinvars && binvarused[probidxbinvar] != 1 )
+            {
+               SCIP_Real QUAD(tmp);
+               SCIP_Real rowcoefbinvar;
+               SCIP_Real rowcoefsign = COPYSIGN(1.0, rowcoef);
+               SCIP_Real val2;
+               SCIP_Real val1;
+
+               QUAD_ARRAY_LOAD(tmp, rowcoefs, probidxbinvar);
+               rowcoefbinvar = QUAD_TO_DBL(tmp);
+               val2 = rowcoefsign * ((rowcoef * vubcoefs[candidx]) + rowcoefbinvar);
+               val1 = rowcoefsign * ((rowcoef * (bestslb - vubconsts[candidx])) + rowcoefbinvar);
+               if( val2 >= 0.0 && !SCIPisInfinity(scip, val2) && val1 >= 0.0 )
+               {
+                  *closestvub = candvub;
+                  *closestvubidx = candidx;
+                  return SCIP_OKAY;
+               }
+            }
+         }
+      }
 
       for( i = 0; i < nvubs; i++ )
       {
