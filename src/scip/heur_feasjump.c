@@ -798,12 +798,7 @@ SCIP_RETCODE fjSolverUpdateJumpValue(
    currentvalue = var->lb;
    currentslope = 0.0;
    if( solver->objectiveweight > 0.0 && !SCIPisInfinity(scip, -var->lb) && !SCIPisInfinity(scip, var->ub) )
-   {
-      if( SCIPisPositive(scip, var->objcoeff) )
-         currentslope = solver->objectiveweight;
-      else if( SCIPisNegative(scip, var->objcoeff) )
-         currentslope = -solver->objectiveweight;
-   }
+      currentslope = solver->objectiveweight * var->objcoeff;
 
    /* compute shift buffer */
    for( i = 0; i < var->ncoeffs; ++i )
@@ -889,7 +884,9 @@ SCIP_RETCODE fjSolverUpdateJumpValue(
 
       if( validrangelb > currentvalue )
       {
-         currentslope -= solver->weight[cstridx];
+         SCIP_Real cslope = solver->weight[cstridx] * REALABS(coeff);
+
+         currentslope -= cslope;
          if( validrangelb < var->ub )
          {
             /* ensure capacity */
@@ -905,15 +902,17 @@ SCIP_RETCODE fjSolverUpdateJumpValue(
                solver->shiftbuffersize = newsize;
             }
             solver->shiftbuffer[solver->nshiftbuffer]->value = validrangelb;
-            solver->shiftbuffer[solver->nshiftbuffer]->weight = solver->weight[cstridx];
+            solver->shiftbuffer[solver->nshiftbuffer]->weight = cslope;
             solver->nshiftbuffer++;
          }
       }
 
       if( validrangeub <= currentvalue )
-         currentslope += solver->weight[cstridx];
+         currentslope += solver->weight[cstridx] * REALABS(coeff);
       else if( validrangeub < var->ub )
       {
+         SCIP_Real cslope = solver->weight[cstridx] * REALABS(coeff);
+
          /* ensure capacity */
          if( solver->nshiftbuffer >= solver->shiftbuffersize )
          {
@@ -927,7 +926,7 @@ SCIP_RETCODE fjSolverUpdateJumpValue(
             solver->shiftbuffersize = newsize;
          }
          solver->shiftbuffer[solver->nshiftbuffer]->value = validrangeub;
-         solver->shiftbuffer[solver->nshiftbuffer]->weight = solver->weight[cstridx];
+         solver->shiftbuffer[solver->nshiftbuffer]->weight = cslope;
          solver->nshiftbuffer++;
       }
    }
@@ -1967,11 +1966,6 @@ SCIP_RETCODE fjCheckTermination(
             SCIP_Bool submitnow;
 
             stored = FALSE;
-            solver->bestobj = objective;
-            solver->effort = 0;
-            memcpy(solver->bestassignment, solver->incumbentassignment, (size_t)problem->nvars * sizeof(SCIP_Real));
-            solver->haspendingbest = TRUE;
-
             submitnow = (SCIPgetNSols(scip) == 0)
                || (objective < SCIPgetCutoffbound(scip)
                   && (SCIPisInfinity(scip, solver->lastsubmittedobj)
@@ -1979,21 +1973,31 @@ SCIP_RETCODE fjCheckTermination(
 
             if( submitnow )
             {
-               SCIP_CALL( checkIncumbentSol(scip, heur, heurtiming, solver->bestassignment, &stored) );
+               SCIP_CALL( checkIncumbentSol(scip, heur, heurtiming, solver->incumbentassignment, &stored) );
                if( stored )
                {
                   ++solver->nsols;
+                  solver->bestobj = objective;
+                  solver->effort = 0;
+                  memcpy(solver->bestassignment, solver->incumbentassignment, (size_t)problem->nvars * sizeof(SCIP_Real));
                   solver->lastsubmittedobj = objective;
                   solver->haspendingbest = FALSE;
                   if( heurdata->verbosity >= 1 )
                      SCIPinfoMessage(scip, NULL, "Feasibility jump: accepted objective %g\n", objective);
                }
             }
+            else
+            {
+               solver->bestobj = objective;
+               solver->effort = 0;
+               memcpy(solver->bestassignment, solver->incumbentassignment, (size_t)problem->nvars * sizeof(SCIP_Real));
+               solver->haspendingbest = TRUE;
+            }
 
             if( (heurdata->maxsols >= 0 && solver->nsols >= heurdata->maxsols)
                || (problem->feasibility && stored)
-               || SCIPisInfinity(scip, -objective)
-               || SCIPisLE(scip, objective, problem->locallowerbound) )
+               || (stored && (SCIPisInfinity(scip, -objective)
+                  || SCIPisLE(scip, objective, problem->locallowerbound))) )
             {
                *terminate = TRUE;
                return SCIP_OKAY;
