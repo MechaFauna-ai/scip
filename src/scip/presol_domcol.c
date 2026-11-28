@@ -51,6 +51,7 @@
 #include <string.h>
 
 #include "blockmemshell/memory.h"
+#include "scip/debug.h"
 #include "scip/presol_domcol.h"
 #include "scip/pub_matrix.h"
 #include "scip/pub_message.h"
@@ -2142,7 +2143,6 @@ static
 SCIP_RETCODE collectParallelBinChainPairs(
    SCIP*                 scip,
    SCIP_MATRIX*          matrix,
-   const FIXINGDIRECTION* varstofix,
    SCIP_VAR**            hivars,
    SCIP_VAR**            lovars,
    int                   maxpairs,
@@ -2171,8 +2171,6 @@ SCIP_RETCODE collectParallelBinChainPairs(
       uint64_t h;
       int k;
 
-      if( varstofix != NULL && varstofix[v] != NOFIX )
-         continue;
       if( !SCIPvarIsActive(var) || !SCIPvarIsBinary(var) )
          continue;
       if( SCIPvarGetLbGlobal(var) > 0.5 || SCIPvarGetUbGlobal(var) < 0.5 )
@@ -2276,7 +2274,7 @@ SCIP_Bool allowParBinSym(
 
    if( SCIPgetNBinVars(scip) < 2 || SCIPisReoptEnabled(scip)
       || SCIPisNLPEnabled(scip) || SCIPgetNActivePricers(scip) > 0
-      || SCIPisExact(scip) || SCIPisCertified(scip) )
+      || SCIPisExact(scip) || SCIPisCertified(scip) || SCIPdebugSolIsEnabled(scip) )
       return FALSE;
 
    param = SCIPgetParam(scip, "misc/usesymmetry");
@@ -2392,9 +2390,9 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
             int npairs = 0;
             int p;
 
-            SCIP_CALL( SCIPallocBufferArray(scip, &hivars, maxpairs) );
-            SCIP_CALL( SCIPallocBufferArray(scip, &lovars, maxpairs) );
-            SCIP_CALL( collectParallelBinChainPairs(scip, matrix, NULL, hivars, lovars, maxpairs, &npairs) );
+            SCIP_CALL( SCIPallocMemoryArray(scip, &hivars, maxpairs) );
+            SCIP_CALL( SCIPallocMemoryArray(scip, &lovars, maxpairs) );
+            SCIP_CALL( collectParallelBinChainPairs(scip, matrix, hivars, lovars, maxpairs, &npairs) );
             SCIPmatrixFree(scip, &matrix);
 
             for( p = 0; p < npairs; ++p )
@@ -2421,8 +2419,8 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
             if( npairs > 0 && *result != SCIP_CUTOFF )
                *result = SCIP_SUCCESS;
 
-            SCIPfreeBufferArray(scip, &lovars);
-            SCIPfreeBufferArray(scip, &hivars);
+            SCIPfreeMemoryArray(scip, &lovars);
+            SCIPfreeMemoryArray(scip, &hivars);
          }
       }
       return SCIP_OKAY;
@@ -2789,9 +2787,9 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
       if( *result != SCIP_CUTOFF && allowParBinSym(scip) )
       {
          int maxpairs = MIN(ncols, 20000);
-         SCIP_CALL( SCIPallocBufferArray(scip, &chainhi, maxpairs) );
-         SCIP_CALL( SCIPallocBufferArray(scip, &chainlo, maxpairs) );
-         SCIP_CALL( collectParallelBinChainPairs(scip, matrix, NULL, chainhi, chainlo, maxpairs, &nchainpairs) );
+         SCIP_CALL( SCIPallocMemoryArray(scip, &chainhi, maxpairs) );
+         SCIP_CALL( SCIPallocMemoryArray(scip, &chainlo, maxpairs) );
+         SCIP_CALL( collectParallelBinChainPairs(scip, matrix, chainhi, chainlo, maxpairs, &nchainpairs) );
       }
 
       SCIPmatrixFree(scip, &matrix);
@@ -2827,8 +2825,8 @@ SCIP_DECL_PRESOLEXEC(presolExecDomcol)
             *result = SCIP_SUCCESS;
       }
 
-      SCIPfreeBufferArrayNull(scip, &chainlo);
-      SCIPfreeBufferArrayNull(scip, &chainhi);
+      SCIPfreeMemoryArrayNull(scip, &chainlo);
+      SCIPfreeMemoryArrayNull(scip, &chainhi);
    }
 
    return SCIP_OKAY;
