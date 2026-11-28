@@ -84,7 +84,7 @@
 #define DEFAULT_MAXRELIABLE      5.0         /**< maximal value for minimum pseudo cost size to regard pseudo cost value as reliable */
 #define DEFAULT_SBITERQUOT       0.5         /**< maximal fraction of strong branching LP iterations compared to normal iterations */
 #define DEFAULT_DYNAMICLOOKAHEADQUOT 0.6     /**< apply dynamic lookahead after this fraction maxlookahead is reached */
-#define DEFAULT_SBITEROFS        100000      /**< additional number of allowed strong branching LP iterations */
+#define DEFAULT_SBITEROFS        50000       /**< additional number of allowed strong branching LP iterations */
 #define DEFAULT_SBITERQUOTRESTART 0.25      /**< factor for the strong branching LP iteration budget as long as at most
                                               *   sbiterrestarts restarts have been performed */
 #define DEFAULT_SBITERRESTARTS   2           /**< maximal number of performed restarts for which the strong branching LP
@@ -92,7 +92,7 @@
 #define DEFAULT_MAXLOOKAHEAD     9           /**< maximal number of further variables evaluated without better score */
 #define DEFAULT_INITCAND         100         /**< maximal number of candidates initialized with strong branching per node */
 #define DEFAULT_INITITER         0           /**< iteration limit for strong branching initialization of pseudo cost entries (0: auto) */
-#define DEFAULT_MAXINITITER      500         /**< maximal iteration limit for strong branching initialization of pseudo cost
+#define DEFAULT_MAXINITITER      200         /**< maximal iteration limit for strong branching initialization of pseudo cost
                                               *   entries if the limit is computed automatically (inititer = 0) */
 #define DEFAULT_MAXBDCHGS        5           /**< maximal number of bound tightenings before the node is reevaluated (-1: unlimited) */
 #define DEFAULT_MAXPROPROUNDS    -2          /**< maximum number of propagation rounds to be performed during strong branching
@@ -1025,7 +1025,7 @@ SCIP_Bool continueStrongBranchingLookahead(
    )
 {
    return candidx < ninitcands && lookahead < maxlookahead && nbdchgs + nbdconflicts < maxbdchgs
-               && (candidx < (int) maxlookahead || SCIPgetNStrongbranchLPIterations(scip) < maxnsblpiterations);
+               && (candidx < 2 || SCIPgetNStrongbranchLPIterations(scip) < maxnsblpiterations);
 }
 
 /** Decide if we continue strong branching based on the estimation of the tree size given the current gains. */
