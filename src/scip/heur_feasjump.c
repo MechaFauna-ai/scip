@@ -1962,21 +1962,24 @@ SCIP_RETCODE fjCheckTermination(
          solver->incumbentobj = objective;
       }
 
-      if( SCIPisInfinity(scip, solver->bestobj) || SCIPisLT(scip, objective, solver->bestobj) )
+      if( SCIPisInfinity(scip, solver->bestobj) || objective < solver->bestobj )
       {
          SCIP_Real relimp = SCIPisInfinity(scip, solver->bestobj)
             ? 1.0 : (solver->bestobj - objective) / MAX(1.0, REALABS(objective));
+         SCIP_Bool firstfeas = SCIPisInfinity(scip, solver->bestobj);
          SCIP_Bool submitnow;
 
          stored = FALSE;
-         submitnow = (SCIPgetNSols(scip) == 0) || (objective < SCIPgetCutoffbound(scip));
+         submitnow = (heurtiming == SCIP_HEURTIMING_BEFOREPRESOL)
+            || (SCIPgetNSols(scip) == 0)
+            || SCIPisLE(scip, objective, SCIPgetCutoffbound(scip));
 
          if( submitnow )
          {
             SCIP_CALL( checkIncumbentSol(scip, heur, heurtiming, solver->incumbentassignment, &stored) );
             if( stored )
             {
-               if( solver->nsols == 0 || relimp > 1e-4 )
+               if( firstfeas || relimp > 1e-4 )
                   solver->effort = 0;
                ++solver->nsols;
                solver->bestobj = objective;
@@ -1987,7 +1990,7 @@ SCIP_RETCODE fjCheckTermination(
          else
          {
             /* SCIP already has a better incumbent; record local progress so FJ keeps improving toward cutoff */
-            if( solver->nsols == 0 || relimp > 1e-4 )
+            if( firstfeas || relimp > 1e-4 )
                solver->effort = 0;
             solver->bestobj = objective;
          }
