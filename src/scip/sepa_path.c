@@ -541,11 +541,8 @@ SCIP_RETCODE separatePathMixingCut(
          SCIP_Real c = accvals[v];
          const PATHVARINFO* vi = &varinfo[v];
 
-         if( REALABS(c) <= epsilon )
-         {
-            accvals[v] = 0.0;
+         if( c == 0.0 )
             continue;
-         }
 
          if( !vi->iscont )
          {
@@ -560,7 +557,8 @@ SCIP_RETCODE separatePathMixingCut(
                r -= (long double)c * (long double)vi->ub;
                if( allowlocal && SCIPisLT(scip, vi->ub, SCIPvarGetUbGlobal(vars[v])) )
                   rowlocal = TRUE;
-               accvals[v] = -c;
+               c = -c;
+               accvals[v] = c;
             }
             else
             {
@@ -568,6 +566,34 @@ SCIP_RETCODE separatePathMixingCut(
                break;
             }
          }
+
+         /* safely drop tiny coefficients in nonnegative transformed space (0 <= x' <= u') */
+         if( REALABS(c) <= epsilon )
+         {
+            if( c < 0.0 )
+            {
+               SCIP_Real glblb = SCIPvarGetLbGlobal(vars[v]);
+               SCIP_Real glbub = SCIPvarGetUbGlobal(vars[v]);
+               SCIP_Real loclb = allowlocal ? SCIPvarGetLbLocal(vars[v]) : glblb;
+               SCIP_Real locub = allowlocal ? SCIPvarGetUbLocal(vars[v]) : glbub;
+
+               /* relax c * x' >= c * (ub - lb) only when a finite simple domain range is known */
+               if( !vi->iscont && !SCIPisInfinity(scip, -loclb) && !SCIPisInfinity(scip, locub) )
+               {
+                  r -= (long double)c * (long double)(locub - loclb);
+                  if( allowlocal && (SCIPisGT(scip, loclb, glblb) || SCIPisLT(scip, locub, glbub)) )
+                     rowlocal = TRUE;
+               }
+               else
+               {
+                  rowok = FALSE;
+                  break;
+               }
+            }
+            accvals[v] = 0.0;
+            continue;
+         }
+
          ++nnzkept;
       }
 
@@ -1548,13 +1574,16 @@ SCIP_RETCODE separatePathCuts(
             SCIP_Real bestoutval = 0.0;
             SCIP_Real bestoutdist = 0.0;
 
-            SCIPaggrRowRemoveZeros(scip, aggrrow, FALSE, &addedsub);
-            aggrnnz = SCIPaggrRowGetNNz(aggrrow);
-            if( aggrnnz == 0 || aggrnnz > maxaggrnonzs )
-               break;
+         SCIP_Bool aggrvalid = TRUE;
 
-            aggrinds = SCIPaggrRowGetInds(aggrrow);
-            addedsub = FALSE;
+         SCIPaggrRowRemoveZeros(scip, aggrrow, FALSE, &aggrvalid);
+         if( !aggrvalid )
+            break;
+         aggrnnz = SCIPaggrRowGetNNz(aggrrow);
+         if( aggrnnz == 0 || aggrnnz > maxaggrnonzs )
+            break;
+
+         aggrinds = SCIPaggrRowGetInds(aggrrow);
 
             /* first substitute any single-continuous-var equality columns */
             if( subpasses < MAXSUBPASSES )
