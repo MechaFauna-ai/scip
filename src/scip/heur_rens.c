@@ -70,7 +70,7 @@
 #define HEUR_FREQ             0
 #define HEUR_FREQOFS          0
 #define HEUR_MAXDEPTH         -1
-#define HEUR_TIMING           SCIP_HEURTIMING_DURINGLPLOOP | SCIP_HEURTIMING_AFTERLPNODE
+#define HEUR_TIMING           (SCIP_HEURTIMING_DURINGLPLOOP | SCIP_HEURTIMING_AFTERLPNODE)
 #define HEUR_USESSUBSCIP      TRUE      /**< does the heuristic use a secondary SCIP instance? */
 
 /* default values for RENS-specific plugins */
@@ -769,12 +769,12 @@ SCIP_DECL_HEUREXEC(heurExecRens)
    heurdata = SCIPheurGetData(heur);
    assert( heurdata != NULL );
 
-   /* during root LP loop, run at most once per run on heavy roots when gap is still large
+   /* during the initial root LP loop, run at most once on heavy roots when gap is still large
     * so RENS does not wait behind a long root separation loop before finding a strong incumbent
     */
    if( heurtiming == SCIP_HEURTIMING_DURINGLPLOOP )
    {
-      if( SCIPgetDepth(scip) != 0 || SCIPgetSubscipDepth(scip) > 0
+      if( SCIPgetDepth(scip) != 0 || SCIPgetNRuns(scip) != 1 || SCIPgetSubscipDepth(scip) > 0
          || heurdata->lastlooprun == SCIPgetNRuns(scip)
          || SCIPgetNSepaRounds(scip) < 2
          || SCIPgetNLPIterations(scip) < 5000
