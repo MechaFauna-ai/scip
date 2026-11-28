@@ -1482,6 +1482,36 @@ SCIP_RETCODE SCIPgetVarStrongbranchWithPropagation(
    SCIP_Real*            newubs              /**< array to store valid upper bounds for all active variables, or NULL */
    );
 
+/** gets strong branching information with propagation and opportunistically mines zero-gain observations for other candidates */
+SCIP_EXPORT
+SCIP_RETCODE SCIPgetVarStrongbranchWithPropagationMining(
+   SCIP*                 scip,               /**< SCIP data structure */
+   SCIP_VAR*             var,                /**< variable to get strong branching values for */
+   SCIP_Real             solval,             /**< value of the variable in the current LP solution */
+   SCIP_Real             lpobjval,           /**< LP objective value of the current LP solution */
+   int                   itlim,              /**< iteration limit for strong branchings */
+   int                   maxproprounds,      /**< maximum number of propagation rounds (-1: no limit, -2: parameter
+                                              *   settings) */
+   SCIP_Real*            down,               /**< stores dual bound after branching column down */
+   SCIP_Real*            up,                 /**< stores dual bound after branching column up */
+   SCIP_Bool*            downvalid,          /**< stores whether the returned down value is a valid dual bound, or NULL */
+   SCIP_Bool*            upvalid,            /**< stores whether the returned up value is a valid dual bound, or NULL */
+   SCIP_Longint*         ndomredsdown,       /**< pointer to store the number of domain reductions down, or NULL */
+   SCIP_Longint*         ndomredsup,         /**< pointer to store the number of domain reductions up, or NULL */
+   SCIP_Bool*            downinf,            /**< pointer to store whether the downwards branch is infeasible, or NULL */
+   SCIP_Bool*            upinf,              /**< pointer to store whether the upwards branch is infeasible, or NULL */
+   SCIP_Bool*            downconflict,       /**< pointer to store whether a conflict constraint was created for down, or NULL */
+   SCIP_Bool*            upconflict,         /**< pointer to store whether a conflict constraint was created for up, or NULL */
+   SCIP_Bool*            lperror,            /**< pointer to store whether an unresolved LP error occurred */
+   SCIP_Real*            newlbs,             /**< array to store valid lower bounds for all active variables, or NULL */
+   SCIP_Real*            newubs,             /**< array to store valid upper bounds for all active variables, or NULL */
+   SCIP_VAR**            minecands,          /**< candidate variables to inspect on degenerate zero-gain probing LPs, or NULL */
+   const SCIP_Real*      minecandssol,       /**< parent LP solution values of minecands, or NULL */
+   int                   nminecands,         /**< number of entries in minecands */
+   SCIP_Bool*            minedown,           /**< flags set to TRUE when down zero-gain is observed, or NULL */
+   SCIP_Bool*            mineup              /**< flags set to TRUE when up zero-gain is observed, or NULL */
+   );
+
 /** gets strong branching information on column variable x with integral LP solution value (val); that is, the down branch
  *  is (val -1.0) and the up brach ins (val +1.0)
  *
