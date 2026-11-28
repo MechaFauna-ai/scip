@@ -797,6 +797,13 @@ SCIP_RETCODE fjSolverUpdateJumpValue(
    solver->nshiftbuffer = 0;
    currentvalue = var->lb;
    currentslope = 0.0;
+   if( solver->objectiveweight > 0.0 && !SCIPisInfinity(scip, -var->lb) && !SCIPisInfinity(scip, var->ub) )
+   {
+      if( SCIPisPositive(scip, var->objcoeff) )
+         currentslope = solver->objectiveweight;
+      else if( SCIPisNegative(scip, var->objcoeff) )
+         currentslope = -solver->objectiveweight;
+   }
 
    /* compute shift buffer */
    for( i = 0; i < var->ncoeffs; ++i )
@@ -1273,7 +1280,7 @@ SCIP_RETCODE fjSolverInit(
 
    solver->previolations = solver->nunsat;
    solver->effort = 0;
-   solver->totaleffort = solver->problem->nnonzeros;
+   solver->totaleffort = 0;
 
    return SCIP_OKAY;
 }
@@ -1929,13 +1936,6 @@ SCIP_RETCODE fjCheckTermination(
 
    *terminate = FALSE;
 
-   /* check total effort budget */
-   if( heurdata->maxtotaleffort >= 0 && solver->totaleffort >= heurdata->maxtotaleffort )
-   {
-      *terminate = TRUE;
-      return SCIP_OKAY;
-   }
-
    /* check for reduction in number of violated constraints */
    if( solver->nunsat < solver->previolations
       && (heurdata->mindecreaserel == 0.0
@@ -1945,7 +1945,7 @@ SCIP_RETCODE fjCheckTermination(
       solver->effort = 0;
    }
 
-   /* handle feasible assignment (zero violated constraints) */
+   /* handle feasible assignment (zero violated constraints) before effort-limit checks so a final move is never lost */
    if( solver->nunsat == 0 )
    {
       problem = solver->problem;
@@ -1966,6 +1966,7 @@ SCIP_RETCODE fjCheckTermination(
          {
             SCIP_Bool submitnow;
 
+            stored = FALSE;
             solver->bestobj = objective;
             solver->effort = 0;
             memcpy(solver->bestassignment, solver->incumbentassignment, (size_t)problem->nvars * sizeof(SCIP_Real));
@@ -1990,7 +1991,7 @@ SCIP_RETCODE fjCheckTermination(
             }
 
             if( (heurdata->maxsols >= 0 && solver->nsols >= heurdata->maxsols)
-               || problem->feasibility
+               || (problem->feasibility && stored)
                || SCIPisInfinity(scip, -objective)
                || SCIPisLE(scip, objective, problem->locallowerbound) )
             {
@@ -2001,8 +2002,9 @@ SCIP_RETCODE fjCheckTermination(
       }
    }
 
-   /* check effort budget without improvement */
-   if( heurdata->maxeffort >= 0 && solver->effort >= heurdata->maxeffort )
+   /* check total effort budget and effort budget without improvement */
+   if( (heurdata->maxtotaleffort >= 0 && solver->totaleffort >= heurdata->maxtotaleffort)
+      || (heurdata->maxeffort >= 0 && solver->effort >= heurdata->maxeffort) )
       *terminate = TRUE;
 
    return SCIP_OKAY;
@@ -2113,6 +2115,12 @@ SCIP_RETCODE runFeasjump(
       SCIPdebugMsg(scip, "varidx=%d value=%g nunsat=%d good=%d effort=%" SCIP_LONGINT_FORMAT " obj=%g\n", varidx,
          solver->incumbentassignment[varidx], solver->nunsat, solver->ngoodvars, solver->effort,
          solver->incumbentobj);
+   }
+
+   /* if the loop exited due to SCIPisStopped() right after a move reached feasibility, record/submit it */
+   if( !terminate && solver->nunsat == 0 )
+   {
+      SCIP_CALL( fjCheckTermination(scip, solver, heurdata, heur, heurtiming, &terminate) );
    }
 
    /* submit any buffered best feasible solution before freeing solver */
