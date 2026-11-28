@@ -269,9 +269,6 @@ SCIP_RETCODE solveSubscip(
       REDCOSTLNS_CALL( SCIPcatchEvent(subscip, SCIP_EVENTTYPE_LPSOLVED, eventhdlr, (SCIP_EVENTDATA*)heurdata, NULL) );
       caughtevent = TRUE;
       subretcode = SCIPsolve(subscip);
-      REDCOSTLNS_CALL( SCIPdropEvent(subscip, SCIP_EVENTTYPE_LPSOLVED, eventhdlr, (SCIP_EVENTDATA*)heurdata, -1) );
-      caughtevent = FALSE;
-
       if( subretcode != SCIP_OKAY )
       {
          SCIPwarningMessage(scip, "Error while solving subproblem in %s heuristic; sub-SCIP terminated with code <%d>\n",
@@ -279,6 +276,8 @@ SCIP_RETCODE solveSubscip(
          retcode = subretcode;
          goto TERMINATE;
       }
+      REDCOSTLNS_CALL( SCIPdropEvent(subscip, SCIP_EVENTTYPE_LPSOLVED, eventhdlr, (SCIP_EVENTDATA*)heurdata, -1) );
+      caughtevent = FALSE;
 
       REDCOSTLNS_CALL( SCIPmergeVariableStatistics(subscip, scip, subvars, vars, nvars) );
 
@@ -577,9 +576,10 @@ SCIP_DECL_HEUREXEC(heurExecRedcostlns)
 
    REDCOSTLNS_CALL( SCIPendProbing(scip) );
 
-   /* apply any proven global root dual bound lift */
+   /* apply any proven global root dual bound lift (sound at depth 0 where local == global) */
    if( canlift && liftedlb > globallb + SCIPfeastol(scip) && liftedlb < cutoffbound )
    {
+      assert(SCIPgetDepth(scip) == 0);
       REDCOSTLNS_CALL( SCIPupdateLocalLowerbound(scip, liftedlb) );
    }
 
