@@ -41,7 +41,7 @@
 #include "scip/cons_indicator.h"
 #include "scip/cons_sos1.h"
 
-#define MINLPITER                 10000 /**< minimal number of LP iterations allowed in each LP solving call */
+#define MINLPITER                 2000 /**< minimal number of LP iterations allowed in each LP solving call */
 
 
 /** solve probing LP */
@@ -248,6 +248,7 @@ SCIP_RETCODE SCIPperformGenericDivingAlgorithm(
    SCIP_Real ubquot;
    SCIP_Real avgquot;
    SCIP_Longint maxnlpiterations;
+   SCIP_Longint stopnlpiterations;
    SCIP_Longint domreds;
    int startndivecands;
    int depth;
@@ -335,6 +336,11 @@ SCIP_RETCODE SCIPperformGenericDivingAlgorithm(
    /* allow at least a certain number of LP iterations in this dive */
    if( SCIPdivesetGetNLPIterations(diveset, divecontext) + MINLPITER > maxnlpiterations )
       maxnlpiterations = SCIPdivesetGetNLPIterations(diveset, divecontext) + MINLPITER;
+
+   /* soft outer-loop stopping threshold so rapid fractionality drops or shallow depth cannot run unbounded LP iterations */
+   stopnlpiterations = (maxnlpiterations <= SCIP_LONGINT_MAX - 2 * MINLPITER)
+      ? maxnlpiterations + 2 * MINLPITER
+      : SCIP_LONGINT_MAX;
 
    /* these constraint handlers are required for polishing an LP relaxation solution beyond rounding */
    indconshdlr = SCIPfindConshdlr(scip, "indicator");
@@ -524,6 +530,10 @@ SCIP_RETCODE SCIPperformGenericDivingAlgorithm(
             }
          }
       }
+
+      /* stop diving if LP iteration stopping threshold was reached, after evaluating the current LP solution above */
+      if( SCIPdivesetGetNLPIterations(diveset, divecontext) >= stopnlpiterations )
+         break;
 
       /* working solution must be linked to LP solution */
       assert(SCIPgetLPSolstat(scip) == SCIP_LPSOLSTAT_OPTIMAL);
