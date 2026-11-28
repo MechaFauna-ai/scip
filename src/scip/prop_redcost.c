@@ -99,6 +99,8 @@ struct SCIP_PropData
 {
    SCIP_Bool             continuous;         /**< should reduced cost fixing be also applied to continuous variables? */
    SCIP_Real             maxredcost;         /**< maximum reduced cost of a single binary variable */
+   SCIP_Real             lastcutoffbound;    /**< last cutoff bound for which binary variables were propagated */
+   SCIP_Bool             maxredcostinit;     /**< has maxredcost been initialized from an LP solve with finite cutoff? */
    SCIP_Bool             usefullimplics;     /**< are the implied reduced cost useful */
    SCIP_Bool             useimplics;         /**< should implications be used to strength the reduced cost for binary variables? */
    SCIP_Bool             force;              /**< should the propagator be forced even if active pricer are present? */
@@ -270,6 +272,9 @@ SCIP_RETCODE propagateRedcostBinvar(
        */
       assert(!SCIPisLPDualReliable(scip) || !SCIPisDualfeasNegative(scip, redcost));
 
+      /* update maximum reduced cost of a single binary variable */
+      propdata->maxredcost = MAX(propdata->maxredcost, redcost);
+
       if( redcost > requiredredcost )
       {
          SCIPdebugMsg(scip, "variable <%s>: fixed 0.0 (requiredredcost <%g>, redcost <%g>)\n",
@@ -290,6 +295,9 @@ SCIP_RETCODE propagateRedcostBinvar(
        * cutoffs) we don't want to skip propagating with reduced costs as an unexpected side-effect.
        */
       assert(!SCIPisLPDualReliable(scip) || !SCIPisDualfeasPositive(scip, redcost));
+
+      /* update maximum reduced cost of a single binary variable */
+      propdata->maxredcost = MAX(propdata->maxredcost, -redcost);
 
       if( -redcost > requiredredcost )
       {
@@ -567,6 +575,8 @@ SCIP_DECL_PROPINITSOL(propInitsolRedcost)
 
    propdata->usefullimplics = FALSE;
    propdata->maxredcost = 0.0;
+   propdata->lastcutoffbound = SCIP_INVALID;
+   propdata->maxredcostinit = FALSE;
 
    return SCIP_OKAY;
 }
@@ -651,8 +661,14 @@ SCIP_DECL_PROPEXEC(propExecRedcost)
    /* get LP objective value */
    lpobjval = SCIPgetLPObjval(scip);
 
-   /* check if binary variables should be propagated */
-   propbinvars = (SCIPgetDepth(scip) == 0) || (cutoffbound - lpobjval < 5 * propdata->maxredcost);
+   /* check if binary variables should be propagated: always at root, on first finite-cutoff LP solve (when no
+    * incumbent existed at root), whenever cutoffbound tightened, or when gap is within 5x max observed reduced cost
+    */
+   propbinvars = (SCIPgetDepth(scip) == 0)
+      || !propdata->maxredcostinit
+      || (propdata->lastcutoffbound == SCIP_INVALID) /*lint !e777*/
+      || SCIPisLT(scip, cutoffbound, propdata->lastcutoffbound)
+      || (cutoffbound - lpobjval < 5.0 * propdata->maxredcost);
 
    /* skip the propagator if the problem has only binary variables and those should not be propagated */
    if( !propbinvars && SCIPgetNVars(scip) == SCIPgetNBinVars(scip) )
@@ -697,6 +713,12 @@ SCIP_DECL_PROPEXEC(propExecRedcost)
       {
          SCIP_CALL( propagateRedcostVar(scip, var, cols[c], lpobjval, cutoffbound, &nchgbds) );
       }
+   }
+
+   if( propbinvars && !cutoff )
+   {
+      propdata->lastcutoffbound = cutoffbound;
+      propdata->maxredcostinit = TRUE;
    }
 
    if( cutoff )
