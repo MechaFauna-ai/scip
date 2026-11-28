@@ -263,7 +263,7 @@
 #define SCIP_DEFAULT_LP_FREESOLVALBUFFERS FALSE /**< should the buffers for storing LP solution values during diving be freed at end of diving? */
 #define SCIP_DEFAULT_LP_COLAGELIMIT          10 /**< maximum age a dynamic column can reach before it is deleted from SCIP_LP
                                                  *   (-1: don't delete columns due to aging) */
-#define SCIP_DEFAULT_LP_ROWAGELIMIT          10 /**< maximum age a dynamic row can reach before it is deleted from SCIP_LP
+#define SCIP_DEFAULT_LP_ROWAGELIMIT           2 /**< maximum age a dynamic row can reach before it is deleted from SCIP_LP
                                                  *   (-1: don't delete rows due to aging) */
 #define SCIP_DEFAULT_LP_CLEANUPCOLS       FALSE /**< should new non-basic columns be removed after LP solving? */
 #define SCIP_DEFAULT_LP_CLEANUPCOLSROOT   FALSE /**< should new non-basic columns be removed after root LP solving? */
