@@ -80,8 +80,9 @@
 #define DEFAULT_TARGETFIXRATE 0.50
 #define DEFAULT_MINLURKRATIO  0.10
 #define DEFAULT_MINIMPROVE    0.01
-#define DEFAULT_MAXNODES      500LL
-#define DEFAULT_STALLNODES    200LL
+#define DEFAULT_MAXNODES      250LL
+#define DEFAULT_STALLNODES    100LL
+#define DEFAULT_MAXLPITER     25000LL
 #define DEFAULT_LPLIMFAC      2.0
 #define DEFAULT_COPYCUTS      TRUE
 #define DEFAULT_LIFTDUALBOUND TRUE
@@ -99,6 +100,7 @@ struct SCIP_HeurData
    SCIP_Real             minimprove;
    SCIP_Longint          maxnodes;
    SCIP_Longint          stallnodes;
+   SCIP_Longint          maxlpiter;
    SCIP_Real             lplimfac;
    SCIP_Real             nodelimit;
    SCIP_Bool             copycuts;
@@ -143,7 +145,9 @@ SCIP_DECL_EVENTEXEC(eventExecRedcostlns)
 
    heurdata = (SCIP_HEURDATA*)eventdata;
 
-   if( SCIPgetNLPs(scip) > heurdata->lplimfac * heurdata->nodelimit )
+   /* interrupt sub-SCIP if LP solve count or best-effort cumulative LP iteration threshold is exceeded */
+   if( SCIPgetNLPs(scip) > heurdata->lplimfac * heurdata->nodelimit
+      || (heurdata->maxlpiter >= 0 && SCIPgetNLPIterations(scip) > heurdata->maxlpiter) )
    {
       SCIP_CALL( SCIPinterruptSolve(scip) );
    }
@@ -202,6 +206,11 @@ SCIP_RETCODE solveSubscip(
    heurdata->nodelimit = (SCIP_Real)heurdata->maxnodes;
    REDCOSTLNS_CALL( SCIPsetLongintParam(subscip, "limits/stallnodes", heurdata->stallnodes) );
    REDCOSTLNS_CALL( SCIPsetLongintParam(subscip, "limits/nodes", heurdata->maxnodes) );
+   if( heurdata->maxlpiter >= 0 )
+   {
+      REDCOSTLNS_CALL( SCIPsetLongintParam(subscip, "lp/iterlim", heurdata->maxlpiter) );
+      REDCOSTLNS_CALL( SCIPsetLongintParam(subscip, "lp/rootiterlim", heurdata->maxlpiter) );
+   }
    REDCOSTLNS_CALL( SCIPsetSubscipsOff(subscip, TRUE) );
 
    REDCOSTLNS_CALL( SCIPsetSeparating(subscip, SCIP_PARAMSETTING_OFF, TRUE) );
@@ -661,6 +670,11 @@ SCIP_RETCODE SCIPincludeHeurRedcostlns(
          "heuristics/" HEUR_NAME "/stallnodes",
          "number of stalling nodes for the subproblem",
          &heurdata->stallnodes, TRUE, DEFAULT_STALLNODES, 0LL, SCIP_LONGINT_MAX, NULL, NULL) );
+
+   SCIP_CALL( SCIPaddLongintParam(scip,
+         "heuristics/" HEUR_NAME "/maxlpiter",
+         "best-effort cumulative LP iteration threshold and per-LP iteration limit for the subproblem (-1: unlimited)",
+         &heurdata->maxlpiter, TRUE, DEFAULT_MAXLPITER, -1LL, SCIP_LONGINT_MAX, NULL, NULL) );
 
    SCIP_CALL( SCIPaddRealParam(scip,
          "heuristics/" HEUR_NAME "/lplimfac",
