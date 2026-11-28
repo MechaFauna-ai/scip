@@ -66,7 +66,11 @@
 #define PRESOL_NAME             "dualinfer"
 #define PRESOL_DESC             "exploit dual information for fixings and side changes"
 #define PRESOL_PRIORITY                (-3000) /**< priority of the presolver (>= 0: before, < 0: after constraint handlers) */
+#if SCIP_HAS_PAPILO
 #define PRESOL_MAXROUNDS                0    /**< maximal number of presolving rounds the presolver participates in (-1: no limit) */
+#else
+#define PRESOL_MAXROUNDS               -1    /**< maximal number of presolving rounds the presolver participates in (-1: no limit) */
+#endif
 #define PRESOL_TIMING                   SCIP_PRESOLTIMING_EXHAUSTIVE /* timing of the presolver (fast, medium, or exhaustive) */
 
 #define DEFAULT_TWOCOLUMN_COMBINE       TRUE /**< should two column convex combination be used per default */
