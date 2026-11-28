@@ -91,10 +91,10 @@
 #define DEFAULT_MAXTOTALEFFORTFAC 1024   /**< maximum total effort factor per nonzero (-1: unlimited) */
 #define DEFAULT_RECOMPUTEFREQ  0         /**< activity recomputation frequency (-1: off, 0: near boundary only) */
 #define DEFAULT_USEINITIALSOL  TRUE      /**< should best known solution be used? */
-#define DEFAULT_ONLYMAINSCIP   FALSE     /**< should run in subscip be skipped? */
+#define DEFAULT_ONLYMAINSCIP   TRUE     /**< should run in subscip be skipped? */
 #define DEFAULT_ONLYBEFORENODE FALSE     /**< should run before presolving be skipped? */
 #define DEFAULT_ONLYWITHOUTSOL FALSE     /**< should run with solution be skipped? */
-#define BEFOREPRESOL_MAXEFFORT 200000000LL /**< cap total effort before presolving (~0.5s max) */
+#define BEFOREPRESOL_MAXEFFORT 60000000LL /**< cap total effort before presolving (~0.5s max) */
 
 /*
  * Data structures
@@ -2212,7 +2212,8 @@ SCIP_DECL_HEUREXEC(heurExecFeasjump)
 
    if( ( heurdata->onlymainscip && SCIPgetSubscipDepth(scip) > 0 )
       || ( heurdata->onlybeforenode && heurtiming == SCIP_HEURTIMING_BEFOREPRESOL )
-      || ( heurdata->onlywithoutsol && SCIPgetNSols(scip) > 0 ) )
+      || ( heurdata->onlywithoutsol && SCIPgetNSols(scip) > 0 )
+      || ( SCIPgetNRuns(scip) > 1 && SCIPgetNSols(scip) > 0 ) )
       return SCIP_OKAY;
 
    SCIPdebugMsg(scip, "Executing Feasjump\n");
